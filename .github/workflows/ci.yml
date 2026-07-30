@@ -8,8 +8,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   quality:
+    name: Format, lint, types, unit and component tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,12 +26,22 @@ jobs:
       - run: npm run format:check
       - run: npm run lint
       - run: npm run typecheck
-      - run: npm run test
+      - run: npm run test:unit
+      - run: npm run test:component
       - run: npm run build
-      - run: npm run build:static
+      - name: Check the build output
+        run: |
+          test -f dist/index.html
+          grep -q "Content-Security-Policy" dist/index.html
+          test -z "$(find dist -name '*.map' -print -quit)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+          retention-days: 7
 
   browser:
-    needs: quality
+    name: Browser tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,6 +50,45 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Cache the Playwright browser
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
       - run: npx playwright install --with-deps chromium
-      - run: npm run test:e2e
-      - run: npm run test:e2e:production
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+      - run: npx playwright install-deps chromium
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+      - name: Run against the dev server
+        run: npm run test:e2e
+      - name: Run against the production build
+        run: npm run test:e2e:production
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report
+          retention-days: 7
+
+  generated-code:
+    name: Validate generated Dart, TypeScript and Python
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: dart-lang/setup-dart@v1
+      - run: npm ci
+      - run: python -m pip install --disable-pip-version-check "pydantic>=2,<3" "ruff>=0.6"
+      - name: TypeScript compiler
+        run: npm run validate:typescript
+      - name: Ruff and Pydantic
+        run: npm run validate:python
+      - name: Dart analyzer and round trip
+        run: npm run validate:dart
