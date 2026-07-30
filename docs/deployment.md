@@ -1,27 +1,73 @@
 # Deployment
 
-## Static hosting
-
-Run:
-
-```bash
-npm ci
-npm run build:static
-```
-
-Publish `dist-static`. Its asset paths are relative, so it can be served from a domain root or a repository path.
-
-GitHub Pages uses `.github/workflows/deploy-pages.yml`. Enable Pages with GitHub Actions as the source, then run the workflow or push to `main`.
-
-Cloudflare Pages, Netlify, and Vercel can use `npm run build:static` as the build command and `dist-static` as the output directory.
-
-## Sites and Cloudflare Worker hosting
-
-Run:
+The build is a folder of static files. There is no server side component, so any
+static host works.
 
 ```bash
 npm ci
 npm run build
 ```
 
-The Sites build uses the vinext and Cloudflare compatible application shell. JSON conversion still runs in the browser. The Worker serves application files and does not receive pasted JSON.
+Publish `dist`. Asset paths are relative, so the same output serves correctly from a
+domain root and from a repository subpath.
+
+## GitHub Pages
+
+`.github/workflows/deploy-pages.yml` publishes `dist` after the CI workflow succeeds
+on `main`. Enable Pages first:
+
+1. Open Settings, then Pages.
+2. Set the source to GitHub Actions.
+3. Push to `main`, or run the workflow manually from the Actions tab.
+
+The workflow runs on `workflow_run` rather than `push`, so a branch with failing
+tests is never published. `workflow_dispatch` is available for a manual deploy.
+
+## Other hosts
+
+| Host             | Build command   | Output directory |
+| ---------------- | --------------- | ---------------- |
+| Cloudflare Pages | `npm run build` | `dist`           |
+| Netlify          | `npm run build` | `dist`           |
+| Vercel           | `npm run build` | `dist`           |
+
+## Response headers
+
+The page carries its own Content Security Policy in a `<meta>` element, injected at
+build time:
+
+```text
+default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:;
+font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none';
+form-action 'none'
+```
+
+`connect-src 'none'` means the published page cannot make a network request at all.
+
+Some directives only work as a response header. If your host lets you set headers,
+add:
+
+```text
+Content-Security-Policy: frame-ancestors 'none'
+Referrer-Policy: no-referrer
+X-Content-Type-Options: nosniff
+Cross-Origin-Opener-Policy: same-origin
+```
+
+`frame-ancestors` is deliberately not in the meta element, because browsers ignore it
+there and log a console error.
+
+## Windows desktop application
+
+```bash
+npm run desktop:build
+npm run desktop:smoke
+```
+
+The first command builds the static site and wraps it with Electron, writing
+`release/win-unpacked`. The second launches the packaged executable, converts a
+document in it, and checks the clipboard bridge.
+
+To hand the folder to someone, ship the whole `win-unpacked` directory. The DLL and
+resource files beside `JSON2Model.exe` are part of the application. The executable is
+not code signed, so SmartScreen shows an unknown publisher warning.

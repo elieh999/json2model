@@ -1,50 +1,127 @@
 # Architecture
 
-JSON2Model separates input handling, schema inference, naming, generation, and React rendering.
+JSON2Model is a static React page. There is no server in the conversion path, and
+the parsing, inference, naming, and generation layers have no React import, so they
+can be called from a script or a test directly.
 
 ## Conversion flow
 
 ```text
 JSON text
-  -> size check and JSON.parse
-  -> language independent SchemaNode tree
-  -> deterministic model registry
-  -> selected language generator
-  -> highlighted text output
+  -> parseJson            size limit, JSON.parse, friendly error, large integer scan
+  -> inferSchema          language independent SchemaNode tree plus warnings
+  -> createModelRegistry  one stable class name per nonempty object node
+  -> generateModels       Dart, TypeScript, or Python text plus warnings
+  -> SyntaxCode           tokenized output rendered as React text nodes
 ```
 
-The parser returns a typed result instead of throwing syntax errors into the interface. It also scans numeric tokens for integers beyond the safe JavaScript range.
+Each step is a pure function of its input. The same document and settings always
+produce the same text, which is what makes the output safe to commit.
 
-Schema inference is pure TypeScript. It has no React, browser storage, network, or clipboard dependency. Each generator consumes the same `SchemaNode` union and returns code, warnings, the file extension, and the generated model count.
+## Why a schema layer
 
-## Internal schema
+Generating each language straight from the parsed JSON would let three generators
+disagree about the same document. Inference happens once and produces a neutral
+tree, and each generator is only responsible for spelling that tree in its own
+language. Adding a fourth language means adding one generator and no inference
+changes.
 
-`SchemaNode` represents:
+## The internal schema
 
-1. Primitive values
-2. Objects with ordered properties
-3. Arrays with an inferred element
-4. Unions
-5. Unknown values with a reason
+`src/schema/types.ts` defines five node kinds:
 
-Optional state belongs to an object property because it describes absence. Nullable state is represented by a union containing null because it describes an observed value.
+| Kind        | Holds                                                        |
+| ----------- | ------------------------------------------------------------ |
+| `primitive` | string, integer, number, boolean, null, date, datetime       |
+| `object`    | ordered properties, each with its JSON key and optional flag |
+| `array`     | one element node and whether the source array was empty      |
+| `union`     | variants, deduplicated and ordered by a stable signature     |
+| `unknown`   | a reason string explaining why nothing could be inferred     |
 
-## Model registry
+Two states that look similar are kept apart on purpose:
 
-The registry walks the schema in stable depth first order. It assigns a model name to every nonempty object node. Names come from the root setting or the property path. Collisions receive a stable numeric suffix.
+- **Optional** belongs to the object property, because it describes a key that was
+  absent from some objects.
+- **Nullable** is a union containing the null primitive, because it describes a
+  value that was present and null.
 
-Generators ask the registry for nested model names. This keeps duplicate handling identical across languages.
+A Dart field is nullable in both cases, since a missing key has no value, but
+Pydantic needs the distinction: an optional field gets `= None` while a required
+nullable field does not, so a missing key is still a validation error.
+
+## Determinism
+
+Three things could have made output vary between runs and are handled explicitly:
+
+1. Union variants are deduplicated through a structural signature and sorted by
+   code point, not by insertion order.
+2. Property sorting, when enabled, compares code points. `localeCompare` was
+   removed because its result depends on the host's locale data.
+3. Model names come from the property path in depth first order, and a collision
+   gets a numeric suffix in discovery order.
+
+## The model registry
+
+`createModelRegistry` walks the schema once and assigns a class name to every
+nonempty object node, keyed by node identity. Two structurally identical objects at
+different paths get separate models, which keeps names meaningful.
+
+The registry is language aware, because the legal character set differs. Dart
+identifiers are ASCII only, and the set of names that would shadow something in
+scope differs per language: `class None(BaseModel)` is a Python syntax error, and a
+Dart class called `String` shadows the core type.
+
+Dart cannot express a union of an object and a primitive. The Dart generator walks
+the schema a second time to find which models its emitted types actually name and
+drops the rest, rather than declaring a class nothing refers to. The model count
+shown in the interface is the number of declarations actually emitted.
+
+## Field names
+
+`planFields` in `src/generators/shared.ts` chooses one member name per property for
+all three generators, so the collision rules cannot drift apart. It handles:
+
+- Two JSON keys that reduce to the same identifier, such as `first-name` and
+  `first_name`. The first keeps the clean name and the next gets a suffix.
+- A key that cannot be an identifier at all, which only happens for Dart. A name is
+  generated and a warning names the key.
+- Names the surrounding declaration already uses. Dart reserves the class name,
+  `toJson`, `fromJson`, and the `Object` members. Python reserves `model_config`,
+  anything starting with `model_`, and a few `BaseModel` members that Pydantic
+  would swallow.
+
+In every case the original JSON key is what `fromJson`, `toJson`, and the Pydantic
+alias use, so no data is lost.
 
 ## Interface
 
-`ConverterApp` owns the input, preferences, theme, notices, and generated result. React `useDeferredValue` keeps typing responsive while generation catches up.
+`ConverterApp` owns the input text, the preferences, the theme, and the notices.
+Generation runs from deferred copies of the input and the settings, so a control
+responds immediately while the expensive work catches up. The output panel reads the
+deferred language too, so its heading always matches the code below it.
 
-Harmless preferences use local storage. Input has a separate key and is written only when remember input is enabled. The default session starts empty.
-
-The Sites application in `app` and the static Vite entry both reuse the same React component. The Sites build supports Cloudflare hosting. The static Vite build produces portable files for ordinary static hosts.
+Preferences are read back from local storage field by field rather than spread in,
+because a stored value of the wrong type would otherwise reach the generators and
+break the page on load. Pasted input has a separate key and is written only when the
+remember input setting is on.
 
 ## Safety
 
-The parser rejects input beyond 2,000,000 characters. Inference stops beyond 80 levels or 50,000 visited nodes. Unexpected failures pass through an error boundary with a local privacy reminder.
+The parser refuses input past 2,000,000 characters and returns that refusal as a
+result rather than throwing, so a paste can never escape a click handler. Inference
+stops past 80 levels of nesting or 50,000 visited values and throws a typed error
+that the interface turns into a readable message. Anything unexpected lands in an
+error boundary that says the JSON was not uploaded.
 
-User text is rendered through normal React nodes. The project does not use `dangerouslySetInnerHTML`, `eval`, input based file paths, analytics, or conversion network calls.
+Generated code and JSON are rendered as React text nodes. The project does not use
+`dangerouslySetInnerHTML`, `eval`, or any input derived file path. The production
+build injects a Content Security Policy with `connect-src 'none'`.
+
+## Desktop shell
+
+`electron/main.cjs` loads the same built page from the local filesystem. The
+renderer runs with context isolation on, Node integration off, and the sandbox
+enabled. `electron/preload.cjs` exposes one frozen function that writes to the
+clipboard, with a length limit checked in the main process, because clipboard access
+from a `file://` page is unreliable. Navigation away from the local file and new
+window requests are both blocked.

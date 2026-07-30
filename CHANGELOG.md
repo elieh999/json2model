@@ -4,13 +4,28 @@
 
 Released 2026-07-30.
 
+First public version. JSON2Model converts a pasted JSON document into Dart,
+TypeScript, or Pydantic 2 models entirely in the browser.
+
 ### Added
 
-1. Local JSON parsing with readable validation errors and safety limits.
-2. Language independent schema inference for objects, arrays, primitives, unions, optional fields, and nullable fields.
-3. Dart, TypeScript, and Python Pydantic 2 generation.
-4. Deterministic naming with reserved word and original key handling.
-5. Responsive light and dark converter interface.
-6. Copy, format, minify, clear, example, download, theme, and generation settings.
-7. Unit, component, browser, static build, and generated code validation.
-8. Continuous integration and GitHub Pages deployment workflows.
+1. Local JSON parsing with readable validation errors, a line and column when the
+   browser reports one, and limits on input size, nesting depth, and visited values.
+2. A language independent schema layer covering objects, arrays, primitives, unions,
+   optional properties, and nullable properties, with deterministic ordering.
+3. Dart, TypeScript, and Python Pydantic 2 generators driven by that schema.
+4. Shared naming rules per language: reserved words, keys that collide after
+   conversion, keys that cannot be an identifier, names a generated declaration
+   already owns, and Pydantic's protected `model_` prefix. The original JSON key is
+   always used for serialization.
+5. Warnings that name the path where inference had to guess, grouped so a large array
+   reports one warning per place rather than one per element.
+6. A responsive two panel interface with light, dark, and system themes, keyboard
+   shortcuts, visible focus, and accessible labels.
+7. Format, minify, clear, load example, copy input, copy output, and download.
+8. Per language generation settings, stored locally and validated when read back.
+9. Unit, component, and browser tests, plus generated code validation through the
+   TypeScript compiler, Ruff, Pydantic 2, and the Dart analyzer with a serialization
+   round trip.
+10. A self contained Windows desktop application built from the same page.
+11. Continuous integration and a GitHub Pages deployment that waits for it to pass.
