@@ -122,6 +122,10 @@ Dark mode:
 
 ![The converter in dark mode](docs/screenshots/desktop-dark.png)
 
+Dart output:
+
+![Dart models generated from the example](docs/screenshots/output-dart.png)
+
 TypeScript output:
 
 ![TypeScript interfaces generated from the example](docs/screenshots/output-typescript.png)
@@ -132,7 +136,8 @@ Python output:
 
 The panels stack on a narrow screen:
 
-![The converter on a phone sized screen](docs/screenshots/mobile-dark.png)
+![The converter on a phone sized screen in dark mode](docs/screenshots/mobile-dark.png)
+![The converter on a phone sized screen in light mode](docs/screenshots/mobile-light.png)
 
 </details>
 
