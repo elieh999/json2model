@@ -1,0 +1,17 @@
+JSON2Model — Ready Windows Folder
+=================================
+
+1. Open the Application folder.
+2. Double-click JSON2Model.exe.
+
+That is all. No installation, Python, Docker, Node.js, account, or internet
+connection is required.
+
+Important: keep every file inside the Application folder together. The DLL and
+resource files beside the executable are part of the application.
+
+The optional Source-Code.zip contains the complete project source, tests,
+documentation, desktop packaging files, and npm lockfile.
+
+If Windows SmartScreen appears, it is because this independent build is not
+code-signed. If you trust this folder, choose "More info" and "Run anyway".
