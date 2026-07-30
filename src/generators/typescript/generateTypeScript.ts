@@ -1,8 +1,7 @@
 import {
   isValidIdentifier,
   quoteString,
-  safePropertyName,
-  toPascalCase,
+  safeClassName,
 } from "@/src/naming/naming";
 import type {
   ObjectSchemaNode,
@@ -10,10 +9,15 @@ import type {
   SchemaWarning,
 } from "@/src/schema/types";
 import { createModelRegistry, type ModelRegistry } from "../modelRegistry";
+import { planFields, type PlannedField } from "../shared";
 import type { GenerationResult, GeneratorOptions } from "../types";
 
 function terminator(options: GeneratorOptions): string {
   return options.typescript.semicolons ? ";" : "";
+}
+
+function unknownName(options: GeneratorOptions): "any" | "unknown" {
+  return options.unknownType === "dynamic" ? "any" : "unknown";
 }
 
 function typescriptType(
@@ -27,6 +31,7 @@ function typescriptType(
         case "string":
         case "date":
         case "datetime":
+          // JSON has no date literal, so a date shaped value stays a string.
           return "string";
         case "integer":
         case "number":
@@ -37,10 +42,10 @@ function typescriptType(
           return "null";
       }
     case "unknown":
-      return options.unknownType === "dynamic" ? "any" : "unknown";
+      return unknownName(options);
     case "object":
       return node.empty
-        ? `Record<string, ${options.unknownType === "dynamic" ? "any" : "unknown"}>`
+        ? `Record<string, ${unknownName(options)}>`
         : registry.modelName(node);
     case "array": {
       const elementType = typescriptType(node.element, registry, options);
@@ -48,17 +53,27 @@ function typescriptType(
         ? `Array<${elementType}>`
         : `${elementType}[]`;
     }
-    case "union":
-      return node.variants
-        .map((variant) => typescriptType(variant, registry, options))
-        .filter((type, index, types) => types.indexOf(type) === index)
-        .join(" | ");
+    case "union": {
+      const seen = new Set<string>();
+      for (const variant of node.variants) {
+        seen.add(typescriptType(variant, registry, options));
+      }
+      return [...seen].join(" | ");
+    }
   }
 }
 
-function propertyName(jsonKey: string, options: GeneratorOptions): string {
-  if (options.convertPropertyNames) {
-    return safePropertyName(jsonKey, "typescript");
+/**
+ * A TypeScript declaration cannot rename a key at runtime, so the original key is
+ * used verbatim by default and quoted when it is not an identifier.
+ */
+function declaredKey(
+  jsonKey: string,
+  field: PlannedField | undefined,
+  options: GeneratorOptions,
+): string {
+  if (options.convertPropertyNames && field) {
+    return field.name;
   }
   return isValidIdentifier(jsonKey, "typescript")
     ? jsonKey
@@ -68,6 +83,7 @@ function propertyName(jsonKey: string, options: GeneratorOptions): string {
 function modelCode(
   name: string,
   node: ObjectSchemaNode,
+  fields: readonly PlannedField[],
   registry: ModelRegistry,
   options: GeneratorOptions,
 ): string {
@@ -75,30 +91,28 @@ function modelCode(
   const readonlyKeyword = options.typescript.readonlyProperties
     ? "readonly "
     : "";
+  const isInterface = options.typescript.declarationMode === "interface";
   const lines: string[] = [];
 
   if (options.includeComments) {
     lines.push(`/** Model inferred from the JSON object for ${name}. */`);
   }
+  lines.push(
+    isInterface
+      ? `${exportKeyword}interface ${name} {`
+      : `${exportKeyword}type ${name} = {`,
+  );
 
-  if (options.typescript.declarationMode === "interface") {
-    lines.push(`${exportKeyword}interface ${name} {`);
-    for (const property of node.properties) {
-      lines.push(
-        `  ${readonlyKeyword}${propertyName(property.jsonKey, options)}${property.optional ? "?" : ""}: ${typescriptType(property.node, registry, options)}${terminator(options)}`,
-      );
-    }
-    lines.push("}");
-  } else {
-    lines.push(`${exportKeyword}type ${name} = {`);
-    for (const property of node.properties) {
-      lines.push(
-        `  ${readonlyKeyword}${propertyName(property.jsonKey, options)}${property.optional ? "?" : ""}: ${typescriptType(property.node, registry, options)}${terminator(options)}`,
-      );
-    }
-    lines.push(`}${terminator(options)}`);
-  }
+  node.properties.forEach((property, index) => {
+    const key = declaredKey(property.jsonKey, fields[index], options);
+    const optional = property.optional ? "?" : "";
+    const type = typescriptType(property.node, registry, options);
+    lines.push(
+      `  ${readonlyKeyword}${key}${optional}: ${type}${terminator(options)}`,
+    );
+  });
 
+  lines.push(isInterface ? "}" : `}${terminator(options)}`);
   return lines.join("\n");
 }
 
@@ -107,19 +121,38 @@ export function generateTypeScript(
   options: GeneratorOptions,
   sourceWarnings: readonly SchemaWarning[] = [],
 ): GenerationResult {
-  const registry = createModelRegistry(schema, options.rootName);
-  const rootName = toPascalCase(options.rootName, "RootModel");
-  const codeParts = registry.models.map((model) =>
-    modelCode(model.name, model.node, registry, options),
-  );
-  const warnings = [...sourceWarnings];
+  const registry = createModelRegistry(schema, options.rootName, "typescript");
+  const rootName = safeClassName(options.rootName, "typescript", "RootModel");
+  const warnings: SchemaWarning[] = [...sourceWarnings];
+  let renamedAnyKey = false;
 
-  if (options.convertPropertyNames) {
+  const codeParts = registry.models.map((model) => {
+    const fields = planFields(model.node.properties, "typescript");
+    if (options.convertPropertyNames) {
+      for (const field of fields) {
+        if (field.name !== field.jsonKey) {
+          renamedAnyKey = true;
+        }
+        if (field.renamed || field.invented) {
+          warnings.push({
+            code: "generated-identifier",
+            path: `${model.path}.${field.jsonKey}`,
+            message: `The key "${field.jsonKey}" competes with another property in ${model.name}, so the declared name is ${field.name}.`,
+          });
+        }
+      }
+    }
+    return modelCode(model.name, model.node, fields, registry, options);
+  });
+
+  // Only warn when a key really changed. Converting names is harmless when every
+  // key is already a valid camelCase identifier.
+  if (options.convertPropertyNames && renamedAnyKey) {
     warnings.push({
       code: "renamed-typescript-key",
       path: "$",
       message:
-        "TypeScript property names were converted for readability. Types do not rename keys at runtime, so map incoming JSON before using the generated type.",
+        "Property names were converted for readability. A TypeScript type does not rename keys at runtime, so map the incoming JSON before using the generated type.",
     });
   }
 
@@ -127,8 +160,9 @@ export function generateTypeScript(
     const exportKeyword = options.typescript.exportDeclarations
       ? "export "
       : "";
+    const rootType = typescriptType(schema, registry, options);
     codeParts.push(
-      `${exportKeyword}type ${rootName} = ${typescriptType(schema, registry, options)}${terminator(options)}`,
+      `${exportKeyword}type ${rootName} = ${rootType}${terminator(options)}`,
     );
   }
 
