@@ -14,11 +14,20 @@ const executablePath = path.join(
   "JSON2Model.exe",
 );
 
+/*
+ * `ELECTRON_RUN_AS_NODE` makes an Electron binary behave as plain Node, so the
+ * window never opens and every command line flag is rejected. Some shells and
+ * tool harnesses export it, so it is removed from the environment the packaged
+ * application inherits.
+ */
+const environment = { ...process.env };
+delete environment.ELECTRON_RUN_AS_NODE;
+
 const errors = [];
 let desktopApp;
 
 try {
-  desktopApp = await electron.launch({ executablePath });
+  desktopApp = await electron.launch({ executablePath, env: environment });
   const window = await desktopApp.firstWindow();
 
   window.on("console", (message) => {
@@ -39,6 +48,14 @@ try {
     );
   }
   await expect(brand).toBeVisible();
+  await expect(window.getByLabel("Paste JSON")).toBeVisible();
+
+  // The packaged application keeps its own storage between runs, so settings a
+  // previous run left behind are cleared before anything is asserted.
+  await window.evaluate(() => {
+    localStorage.clear();
+  });
+  await window.reload();
   await expect(window.getByLabel("Paste JSON")).toBeVisible();
 
   await window

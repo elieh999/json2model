@@ -1,5 +1,5 @@
-JSON2Model — Ready Windows Folder
-=================================
+JSON2Model, ready Windows folder
+================================
 
 1. Open the Application folder.
 2. Double-click JSON2Model.exe.
@@ -13,5 +13,6 @@ resource files beside the executable are part of the application.
 The optional Source-Code.zip contains the complete project source, tests,
 documentation, desktop packaging files, and npm lockfile.
 
-If Windows SmartScreen appears, it is because this independent build is not
-code-signed. If you trust this folder, choose "More info" and "Run anyway".
+If Windows SmartScreen appears, it is because this independent build is not code
+signed. If you trust where this folder came from, choose "More info" and then
+"Run anyway".

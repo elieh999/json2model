@@ -57,9 +57,7 @@ function createWindow() {
     mainWindow = null;
   });
 
-  void mainWindow.loadFile(
-    path.join(__dirname, "..", "dist-static", "index.html"),
-  );
+  void mainWindow.loadFile(path.join(__dirname, "..", "dist", "index.html"));
 }
 
 ipcMain.handle("clipboard:write", (_event, value) => {
