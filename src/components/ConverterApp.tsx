@@ -1,7 +1,4 @@
-"use client";
-
 import {
-  startTransition,
   useCallback,
   useDeferredValue,
   useEffect,
@@ -22,9 +19,9 @@ import {
   type Preferences,
   type ThemePreference,
 } from "@/src/hooks/useStoredPreferences";
-import { toPascalCase } from "@/src/naming/naming";
-import { parseJson } from "@/src/parser/jsonParser";
-import { inferSchema } from "@/src/schema/infer";
+import { safeClassName } from "@/src/naming/naming";
+import { MAX_INPUT_CHARACTERS, parseJson } from "@/src/parser/jsonParser";
+import { DEFAULT_INFERENCE_OPTIONS, inferSchema } from "@/src/schema/infer";
 import type { JsonErrorDetails } from "@/src/schema/types";
 import { Json2ModelError } from "@/src/schema/types";
 import { copyText } from "@/src/utilities/clipboard";
@@ -35,7 +32,11 @@ import { SyntaxCode } from "./SyntaxCode";
 type ConversionState =
   | { readonly status: "empty" }
   | { readonly status: "invalid"; readonly error: JsonErrorDetails }
-  | { readonly status: "failed"; readonly message: string }
+  | {
+      readonly status: "failed";
+      readonly heading: string;
+      readonly message: string;
+    }
   | { readonly status: "ready"; readonly generation: GenerationResult };
 
 const LANGUAGE_LABELS: Record<TargetLanguage, string> = {
@@ -43,6 +44,9 @@ const LANGUAGE_LABELS: Record<TargetLanguage, string> = {
   typescript: "TypeScript",
   python: "Python",
 };
+
+/** A long list of warnings is not readable, so the rest is summarized. */
+const MAX_VISIBLE_WARNINGS = 25;
 
 function convert(
   source: string,
@@ -53,11 +57,12 @@ function convert(
     return { status: "empty" };
   }
 
+  const parsed = parseJson(source);
+  if (!parsed.ok) {
+    return { status: "invalid", error: parsed.error };
+  }
+
   try {
-    const parsed = parseJson(source);
-    if (!parsed.ok) {
-      return { status: "invalid", error: parsed.error };
-    }
     const inferred = inferSchema(parsed.parsed.value, {
       detectDates: options.detectDates,
       preservePropertyOrder: options.preservePropertyOrder,
@@ -70,18 +75,28 @@ function convert(
       ]),
     };
   } catch (error: unknown) {
+    if (error instanceof Json2ModelError) {
+      return {
+        status: "failed",
+        heading: "This document is past a safety limit",
+        message: error.message,
+      };
+    }
     return {
       status: "failed",
+      heading: "Generation could not finish",
       message:
-        error instanceof Json2ModelError
-          ? error.message
-          : "The model generator could not process this structure. Your JSON remains in this browser.",
+        "The model generator could not process this structure. Your JSON remains in this browser.",
     };
   }
 }
 
+/**
+ * Builds the download file name. Only letters, digits, `_` and `-` survive, so a
+ * root name cannot introduce a path separator or a leading dot.
+ */
 function safeDownloadName(rootName: string, extension: string): string {
-  const base = toPascalCase(rootName, "RootModel")
+  const base = safeClassName(rootName, "typescript", "RootModel")
     .replace(/[^\p{L}\p{N}_-]/gu, "")
     .slice(0, 80);
   return `${base || "RootModel"}.${extension}`;
@@ -95,7 +110,7 @@ function ThemeControl({
   readonly onChange: (theme: ThemePreference) => void;
 }) {
   return (
-    <div className="theme-control" aria-label="Color theme">
+    <div className="theme-control" role="group" aria-label="Color theme">
       {(["system", "light", "dark"] as const).map((option) => (
         <button
           aria-pressed={theme === option}
@@ -142,7 +157,16 @@ export function ConverterApp() {
   const [input, setInput] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  /*
+   * Generation runs from deferred copies of the input and the settings. The
+   * controls themselves read the live values, so a checkbox or a tab responds at
+   * once while the expensive regeneration catches up a frame later. Wrapping the
+   * preference update in a transition instead would make a controlled checkbox
+   * snap back to its old state until the transition committed.
+   */
   const deferredInput = useDeferredValue(input);
+  const deferredLanguage = useDeferredValue(preferences.language);
+  const deferredOptions = useDeferredValue(preferences.options);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const inputTouched = useRef(false);
 
@@ -190,8 +214,8 @@ export function ConverterApp() {
   );
 
   const conversion = useMemo(
-    () => convert(deferredInput, preferences.language, preferences.options),
-    [deferredInput, preferences.language, preferences.options],
+    () => convert(deferredInput, deferredLanguage, deferredOptions),
+    [deferredInput, deferredLanguage, deferredOptions],
   );
 
   const showNotice = useCallback((message: string) => {
@@ -204,9 +228,7 @@ export function ConverterApp() {
 
   const updatePreferences = useCallback(
     (update: Partial<Preferences>) => {
-      startTransition(() => {
-        setPreferences((current) => ({ ...current, ...update }));
-      });
+      setPreferences((current) => ({ ...current, ...update }));
     },
     [setPreferences],
   );
@@ -260,8 +282,13 @@ export function ConverterApp() {
         preferences.options.rootName,
         conversion.generation.extension,
       );
+      // Some browsers ignore a click on a detached element, and revoking the URL
+      // in the same tick can cancel the transfer.
+      link.style.display = "none";
+      document.body.append(link);
       link.click();
-      URL.revokeObjectURL(url);
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
       showNotice("Download started");
     } catch {
       showNotice("The code file could not be downloaded.");
@@ -294,7 +321,7 @@ export function ConverterApp() {
       : 0;
 
   return (
-    <main className="app-shell">
+    <div className="app-shell">
       <header className="topbar">
         <div className="brand">
           <div className="brand-mark" aria-hidden="true">
@@ -376,7 +403,7 @@ export function ConverterApp() {
         ) : null}
       </div>
 
-      <section className="workspace" aria-label="JSON conversion workspace">
+      <main className="workspace" aria-label="JSON conversion workspace">
         <InputPanel
           conversion={conversion}
           input={input}
@@ -388,16 +415,21 @@ export function ConverterApp() {
         />
         <OutputPanel
           conversion={conversion}
-          language={preferences.language}
+          // The deferred language matches the code on screen, so the heading
+          // never says Python above Dart output.
+          language={deferredLanguage}
           lineCount={lineCount}
           onCopy={(code) => void handleCopy(code, "Generated code")}
           onDownload={downloadOutput}
         />
-      </section>
+      </main>
 
       <footer>
         <span>All parsing and generation run on this device.</span>
-        <span>Input limit 2,000,000 characters · Depth limit 80</span>
+        <span>
+          Input limit {MAX_INPUT_CHARACTERS.toLocaleString()} characters · Depth
+          limit {DEFAULT_INFERENCE_OPTIONS.maxDepth}
+        </span>
       </footer>
 
       <div
@@ -407,7 +439,7 @@ export function ConverterApp() {
       >
         {notice}
       </div>
-    </main>
+    </div>
   );
 }
 
@@ -458,7 +490,7 @@ function InputPanel({
             Minify
           </ActionButton>
           <ActionButton disabled={!input} onClick={onCopy}>
-            Copy
+            Copy input
           </ActionButton>
           <ActionButton
             disabled={!input}
@@ -503,7 +535,7 @@ function InputPanel({
         <div className="status-message error" role="alert">
           <span aria-hidden="true">!</span>
           <div>
-            <strong>Input limit reached</strong>
+            <strong>{conversion.heading}</strong>
             <p>{conversion.message}</p>
           </div>
         </div>
@@ -532,7 +564,12 @@ function OutputPanel({
           <span className="panel-index accent">02</span>
           <div>
             <h2>{LANGUAGE_LABELS[language]} output</h2>
-            <p>
+            {/*
+              The summary is the live region rather than the code block, so a
+              screen reader hears "42 lines, 3 models" instead of every
+              regenerated line of code.
+            */}
+            <p aria-live="polite">
               {conversion.status === "ready"
                 ? `${lineCount} lines · ${conversion.generation.modelCount} model${conversion.generation.modelCount === 1 ? "" : "s"}`
                 : "Waiting for valid JSON"}
@@ -561,7 +598,7 @@ function OutputPanel({
         </div>
       </div>
 
-      <div className="output-editor" aria-live="polite">
+      <div className="output-editor">
         {conversion.status === "ready" ? (
           <SyntaxCode code={conversion.generation.code} language={language} />
         ) : (
@@ -592,11 +629,26 @@ function OutputPanel({
             {conversion.generation.warnings.length === 1 ? "" : "s"}
           </summary>
           <ul>
-            {conversion.generation.warnings.map((warning, index) => (
-              <li key={`${warning.code}-${warning.path}-${index}`}>
-                {warning.message}
+            {conversion.generation.warnings
+              .slice(0, MAX_VISIBLE_WARNINGS)
+              .map((warning, index) => (
+                <li key={`${warning.code}-${warning.path}-${index}`}>
+                  {warning.message}
+                  {warning.occurrences && warning.occurrences > 1 ? (
+                    <span className="warning-count">
+                      {" "}
+                      ({warning.occurrences} places)
+                    </span>
+                  ) : null}
+                </li>
+              ))}
+            {conversion.generation.warnings.length > MAX_VISIBLE_WARNINGS ? (
+              <li>
+                and{" "}
+                {conversion.generation.warnings.length - MAX_VISIBLE_WARNINGS}{" "}
+                more
               </li>
-            ))}
+            ) : null}
           </ul>
         </details>
       ) : null}

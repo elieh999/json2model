@@ -1,5 +1,3 @@
-"use client";
-
 import type { GeneratorOptions, TargetLanguage } from "@/src/generators/types";
 
 interface Props {
@@ -98,11 +96,6 @@ export function SettingsPanel({
           onChange={(checked) => update("detectDates", checked)}
         />
         <Toggle
-          checked={options.convertPropertyNames}
-          label="Convert property names"
-          onChange={(checked) => update("convertPropertyNames", checked)}
-        />
-        <Toggle
           checked={options.preservePropertyOrder}
           label="Preserve JSON field order"
           onChange={(checked) => update("preservePropertyOrder", checked)}
@@ -147,6 +140,16 @@ export function SettingsPanel({
 
         {language === "typescript" ? (
           <>
+            {/*
+              Dart and Python always convert names because they carry the
+              original key in `fromJson` and in a Pydantic alias. Only a
+              TypeScript declaration has to choose, so the toggle lives here.
+            */}
+            <Toggle
+              checked={options.convertPropertyNames}
+              label="Convert keys to camelCase"
+              onChange={(checked) => update("convertPropertyNames", checked)}
+            />
             <label className="field">
               <span>Declaration style</span>
               <select

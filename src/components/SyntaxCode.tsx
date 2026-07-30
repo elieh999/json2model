@@ -109,7 +109,12 @@ export function SyntaxCode({
   return (
     <pre
       className={`code-output language-${language}`}
+      role="region"
       aria-label={`Generated ${language} code`}
+      // The block scrolls, and WCAG 2.1.1 requires a scrollable container to be
+      // reachable by keyboard. The rule does not accept a labelled region as a
+      // host for tabIndex, but that is the standard pattern for this case.
+      // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex
       tabIndex={0}
     >
       <code>{lines.length <= 3_000 ? lines.map(renderLine) : code}</code>

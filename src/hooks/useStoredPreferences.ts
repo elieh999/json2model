@@ -1,5 +1,3 @@
-"use client";
-
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   DEFAULT_GENERATOR_OPTIONS,
@@ -30,34 +28,113 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function boolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function oneOf<const T extends readonly string[]>(
+  value: unknown,
+  allowed: T,
+  fallback: T[number],
+): T[number] {
+  return typeof value === "string" && allowed.includes(value)
+    ? value
+    : fallback;
+}
+
+/**
+ * Rebuilds preferences from whatever local storage holds.
+ *
+ * Every field is checked individually rather than spread in. Stored values can
+ * be edited or left behind by an older version, and a value of the wrong type
+ * reaching the generators would break the page on load.
+ */
 function mergePreferences(value: unknown): Preferences {
   if (!isRecord(value)) {
     return DEFAULT_PREFERENCES;
   }
-  const options = isRecord(value.options) ? value.options : {};
-  const dart = isRecord(options.dart) ? options.dart : {};
-  const typescript = isRecord(options.typescript) ? options.typescript : {};
-  const python = isRecord(options.python) ? options.python : {};
+  const stored = isRecord(value.options) ? value.options : {};
+  const dart = isRecord(stored.dart) ? stored.dart : {};
+  const typescript = isRecord(stored.typescript) ? stored.typescript : {};
+  const python = isRecord(stored.python) ? stored.python : {};
+  const defaults = DEFAULT_GENERATOR_OPTIONS;
 
   return {
-    language:
-      value.language === "typescript" || value.language === "python"
-        ? value.language
-        : "dart",
-    theme:
-      value.theme === "light" || value.theme === "dark"
-        ? value.theme
-        : "system",
+    language: oneOf(
+      value.language,
+      ["dart", "typescript", "python"] as const,
+      DEFAULT_PREFERENCES.language,
+    ),
+    theme: oneOf(value.theme, ["system", "light", "dark"] as const, "system"),
     rememberInput: value.rememberInput === true,
     options: {
-      ...DEFAULT_GENERATOR_OPTIONS,
-      ...options,
-      dart: { ...DEFAULT_GENERATOR_OPTIONS.dart, ...dart },
-      typescript: {
-        ...DEFAULT_GENERATOR_OPTIONS.typescript,
-        ...typescript,
+      rootName:
+        typeof stored.rootName === "string" && stored.rootName.length <= 80
+          ? stored.rootName
+          : defaults.rootName,
+      detectDates: boolean(stored.detectDates, defaults.detectDates),
+      convertPropertyNames: boolean(
+        stored.convertPropertyNames,
+        defaults.convertPropertyNames,
+      ),
+      preservePropertyOrder: boolean(
+        stored.preservePropertyOrder,
+        defaults.preservePropertyOrder,
+      ),
+      includeComments: boolean(
+        stored.includeComments,
+        defaults.includeComments,
+      ),
+      unknownType: oneOf(
+        stored.unknownType,
+        ["safe", "dynamic"] as const,
+        defaults.unknownType,
+      ),
+      dart: {
+        includeFromJson: boolean(
+          dart.includeFromJson,
+          defaults.dart.includeFromJson,
+        ),
+        includeToJson: boolean(dart.includeToJson, defaults.dart.includeToJson),
+        constConstructors: boolean(
+          dart.constConstructors,
+          defaults.dart.constConstructors,
+        ),
       },
-      python: { ...DEFAULT_GENERATOR_OPTIONS.python, ...python },
+      typescript: {
+        declarationMode: oneOf(
+          typescript.declarationMode,
+          ["interface", "type"] as const,
+          defaults.typescript.declarationMode,
+        ),
+        semicolons: boolean(
+          typescript.semicolons,
+          defaults.typescript.semicolons,
+        ),
+        readonlyProperties: boolean(
+          typescript.readonlyProperties,
+          defaults.typescript.readonlyProperties,
+        ),
+        exportDeclarations: boolean(
+          typescript.exportDeclarations,
+          defaults.typescript.exportDeclarations,
+        ),
+      },
+      python: {
+        modernUnions: boolean(
+          python.modernUnions,
+          defaults.python.modernUnions,
+        ),
+        useAliases: boolean(python.useAliases, defaults.python.useAliases),
+        populateByName: boolean(
+          python.populateByName,
+          defaults.python.populateByName,
+        ),
+        includeExample: boolean(
+          python.includeExample,
+          defaults.python.includeExample,
+        ),
+      },
     },
   };
 }

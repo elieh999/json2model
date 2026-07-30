@@ -1,5 +1,3 @@
-"use client";
-
 import type { ErrorInfo, ReactNode } from "react";
 import { Component } from "react";
 
@@ -12,19 +10,21 @@ interface State {
 }
 
 export class ErrorBoundary extends Component<Props, State> {
-  public state: State = { failed: false };
+  public override state: State = { failed: false };
 
   public static getDerivedStateFromError(): State {
     return { failed: true };
   }
 
-  public componentDidCatch(error: Error, info: ErrorInfo): void {
-    if (process.env.NODE_ENV === "development") {
+  public override componentDidCatch(error: Error, info: ErrorInfo): void {
+    // Details are useful while developing. A production page shows the message
+    // below instead, and nothing is reported anywhere.
+    if (import.meta.env.DEV) {
       console.error("Unexpected interface failure", error, info);
     }
   }
 
-  public render(): ReactNode {
+  public override render(): ReactNode {
     if (this.state.failed) {
       return (
         <main className="fatal-error" role="alert">
