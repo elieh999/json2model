@@ -1,8 +1,4 @@
-import {
-  quoteString,
-  safePropertyName,
-  toPascalCase,
-} from "@/src/naming/naming";
+import { quoteString, safeClassName } from "@/src/naming/naming";
 import type {
   ObjectSchemaNode,
   SchemaNode,
@@ -10,11 +6,32 @@ import type {
   SchemaWarning,
 } from "@/src/schema/types";
 import { createModelRegistry, type ModelRegistry } from "../modelRegistry";
-import { nullableParts } from "../shared";
+import { nullableParts, planFields, type PlannedField } from "../shared";
 import type { GenerationResult, GeneratorOptions } from "../types";
+
+/**
+ * Members every generated class already has. A JSON key that reduces to one of
+ * these would collide with the class itself, with `Object`, or with the
+ * serialization members, so the field is renamed. The original key is still used
+ * for reading and writing JSON.
+ */
+const OBJECT_MEMBERS = [
+  "fromJson",
+  "hashCode",
+  "noSuchMethod",
+  "runtimeType",
+  "toJson",
+  "toString",
+];
 
 function unknownType(options: GeneratorOptions): "dynamic" | "Object?" {
   return options.unknownType === "dynamic" ? "dynamic" : "Object?";
+}
+
+function dartKey(jsonKey: string): string {
+  // Dart interpolates `$` inside string literals, so `json['$id']` would not
+  // compile without escaping it.
+  return quoteString(jsonKey, "'", { escapeDollar: true });
 }
 
 function dartType(
@@ -52,11 +69,12 @@ function dartType(
     case "array":
       return `List<${dartType(node.element, registry, options)}>`;
     case "union":
+      // Dart has no untagged union type, so the value keeps a dynamic type.
       return unknownType(options);
   }
 }
 
-function requiredType(
+function fieldType(
   property: SchemaProperty,
   registry: ModelRegistry,
   options: GeneratorOptions,
@@ -68,11 +86,16 @@ function requiredType(
   return type;
 }
 
+function loopVariable(depth: number): string {
+  return depth === 0 ? "item" : `item${depth + 1}`;
+}
+
 function decodeNonNull(
   node: SchemaNode,
   access: string,
   registry: ModelRegistry,
   options: GeneratorOptions,
+  depth: number,
 ): string {
   switch (node.kind) {
     case "primitive":
@@ -82,6 +105,7 @@ function decodeNonNull(
         case "integer":
           return `${access} as int`;
         case "number":
+          // A JSON whole number decodes to `int`, so widen it explicitly.
           return `(${access} as num).toDouble()`;
         case "boolean":
           return `${access} as bool`;
@@ -92,6 +116,7 @@ function decodeNonNull(
           return "null";
       }
     case "unknown":
+    case "union":
       return access;
     case "object":
       if (node.empty) {
@@ -99,11 +124,23 @@ function decodeNonNull(
       }
       return `${registry.modelName(node)}.fromJson(${access} as Map<String, dynamic>)`;
     case "array": {
-      const item = decodeValue(node.element, "item", registry, options, false);
-      return `(${access} as List<dynamic>).map((item) => ${item}).toList()`;
+      // Nested lists need distinct loop variables so an inner closure does not
+      // shadow the outer one.
+      const variable = loopVariable(depth);
+      const element = decodeValue(
+        node.element,
+        variable,
+        registry,
+        options,
+        false,
+        depth + 1,
+      );
+      if (element === variable) {
+        const elementType = dartType(node.element, registry, options);
+        return `List<${elementType}>.from(${access} as List<dynamic>)`;
+      }
+      return `(${access} as List<dynamic>).map((${variable}) => ${element}).toList()`;
     }
-    case "union":
-      return access;
   }
 }
 
@@ -113,12 +150,27 @@ function decodeValue(
   registry: ModelRegistry,
   options: GeneratorOptions,
   forceNullable: boolean,
+  depth = 0,
 ): string {
   const parts = nullableParts(node);
   if (parts.nullable || forceNullable) {
-    return `${access} == null ? null : ${decodeNonNull(parts.node, `${access}!`, registry, options)}`;
+    // A dynamic value needs no conversion, so a null check around it would only
+    // add an assertion the analyzer flags as pointless.
+    if (
+      decodeNonNull(parts.node, access, registry, options, depth) === access
+    ) {
+      return access;
+    }
+    const decoded = decodeNonNull(
+      parts.node,
+      `${access}!`,
+      registry,
+      options,
+      depth,
+    );
+    return `${access} == null ? null : ${decoded}`;
   }
-  return decodeNonNull(node, access, registry, options);
+  return decodeNonNull(node, access, registry, options, depth);
 }
 
 function encodeNonNull(
@@ -126,9 +178,9 @@ function encodeNonNull(
   field: string,
   registry: ModelRegistry,
   options: GeneratorOptions,
+  depth: number,
 ): string {
-  const parts = nullableParts(node);
-  const resolved = parts.node;
+  const resolved = nullableParts(node).node;
   switch (resolved.kind) {
     case "primitive":
       return resolved.type === "date" || resolved.type === "datetime"
@@ -137,16 +189,18 @@ function encodeNonNull(
     case "object":
       return resolved.empty ? field : `${field}.toJson()`;
     case "array": {
-      const itemExpression = encodeValue(
+      const variable = loopVariable(depth);
+      const element = encodeValue(
         resolved.element,
-        "item",
+        variable,
         registry,
         options,
         false,
+        depth + 1,
       );
-      return itemExpression === "item"
+      return element === variable
         ? field
-        : `${field}.map((item) => ${itemExpression}).toList()`;
+        : `${field}.map((${variable}) => ${element}).toList()`;
     }
     case "unknown":
     case "union":
@@ -160,46 +214,58 @@ function encodeValue(
   registry: ModelRegistry,
   options: GeneratorOptions,
   forceNullable: boolean,
+  depth = 0,
 ): string {
   const parts = nullableParts(node);
   if (parts.nullable || forceNullable) {
-    const encoded = encodeNonNull(parts.node, `${field}!`, registry, options);
+    if (encodeNonNull(parts.node, field, registry, options, depth) === field) {
+      return field;
+    }
+    const encoded = encodeNonNull(
+      parts.node,
+      `${field}!`,
+      registry,
+      options,
+      depth,
+    );
     return `${field} == null ? null : ${encoded}`;
   }
-  return encodeNonNull(node, field, registry, options);
+  return encodeNonNull(node, field, registry, options, depth);
 }
 
 function modelCode(
   name: string,
   node: ObjectSchemaNode,
+  fields: readonly PlannedField[],
   registry: ModelRegistry,
   options: GeneratorOptions,
 ): string {
+  const entries = node.properties.flatMap((property, index) => {
+    const field = fields[index];
+    return field ? [{ property, field }] : [];
+  });
+
   const lines: string[] = [];
   if (options.includeComments) {
     lines.push(`/// Model inferred from the JSON object for ${name}.`);
   }
   lines.push(`class ${name} {`);
+  lines.push(
+    options.dart.constConstructors ? `  const ${name}({` : `  ${name}({`,
+  );
 
-  if (options.dart.constConstructors) {
-    lines.push(`  const ${name}({`);
-  } else {
-    lines.push(`  ${name}({`);
-  }
-  for (const property of node.properties) {
-    const fieldName = safePropertyName(property.jsonKey, "dart");
+  for (const { property, field } of entries) {
     lines.push(
       property.optional
-        ? `    this.${fieldName},`
-        : `    required this.${fieldName},`,
+        ? `    this.${field.name},`
+        : `    required this.${field.name},`,
     );
   }
   lines.push("  });", "");
 
-  for (const property of node.properties) {
-    const fieldName = safePropertyName(property.jsonKey, "dart");
+  for (const { property, field } of entries) {
     lines.push(
-      `  final ${requiredType(property, registry, options)} ${fieldName};`,
+      `  final ${fieldType(property, registry, options)} ${field.name};`,
     );
   }
 
@@ -209,35 +275,30 @@ function modelCode(
       `  factory ${name}.fromJson(Map<String, dynamic> json) {`,
       `    return ${name}(`,
     );
-    for (const property of node.properties) {
-      const fieldName = safePropertyName(property.jsonKey, "dart");
-      const access = `json[${quoteString(property.jsonKey)}]`;
-      lines.push(
-        `      ${fieldName}: ${decodeValue(
-          property.node,
-          access,
-          registry,
-          options,
-          property.optional,
-        )},`,
+    for (const { property, field } of entries) {
+      const decoded = decodeValue(
+        property.node,
+        `json[${dartKey(property.jsonKey)}]`,
+        registry,
+        options,
+        property.optional,
       );
+      lines.push(`      ${field.name}: ${decoded},`);
     }
     lines.push("    );", "  }");
   }
 
   if (options.dart.includeToJson) {
     lines.push("", "  Map<String, dynamic> toJson() {", "    return {");
-    for (const property of node.properties) {
-      const fieldName = safePropertyName(property.jsonKey, "dart");
-      lines.push(
-        `      ${quoteString(property.jsonKey)}: ${encodeValue(
-          property.node,
-          fieldName,
-          registry,
-          options,
-          property.optional,
-        )},`,
+    for (const { property, field } of entries) {
+      const encoded = encodeValue(
+        property.node,
+        field.name,
+        registry,
+        options,
+        property.optional,
       );
+      lines.push(`      ${dartKey(property.jsonKey)}: ${encoded},`);
     }
     lines.push("    };", "  }");
   }
@@ -246,16 +307,110 @@ function modelCode(
   return lines.join("\n");
 }
 
+/**
+ * Collects the models the emitted Dart types actually name.
+ *
+ * A union that mixes an object with another type becomes a dynamic value, so an
+ * object inside it is unreachable and must not be declared.
+ */
+function collectReferences(
+  node: SchemaNode,
+  registry: ModelRegistry,
+  referenced: Set<string>,
+  dropped: Set<string>,
+): void {
+  const resolved = nullableParts(node).node;
+  switch (resolved.kind) {
+    case "object": {
+      if (resolved.empty) {
+        return;
+      }
+      const name = registry.modelName(resolved);
+      if (referenced.has(name)) {
+        return;
+      }
+      referenced.add(name);
+      for (const property of resolved.properties) {
+        collectReferences(property.node, registry, referenced, dropped);
+      }
+      return;
+    }
+    case "array":
+      collectReferences(resolved.element, registry, referenced, dropped);
+      return;
+    case "union":
+      for (const variant of resolved.variants) {
+        if (variant.kind === "object" && !variant.empty) {
+          dropped.add(registry.modelName(variant));
+        }
+      }
+      return;
+    case "primitive":
+    case "unknown":
+      return;
+  }
+}
+
+function identifierWarnings(
+  modelName: string,
+  modelPath: string,
+  fields: readonly PlannedField[],
+): SchemaWarning[] {
+  return fields.flatMap((field) => {
+    if (field.invented) {
+      return [
+        {
+          code: "generated-identifier" as const,
+          path: `${modelPath}.${field.jsonKey}`,
+          message: `The key "${field.jsonKey}" cannot become a Dart identifier, so the field is named ${field.name}. Reading and writing JSON still uses the original key.`,
+        },
+      ];
+    }
+    if (field.renamed) {
+      return [
+        {
+          code: "generated-identifier" as const,
+          path: `${modelPath}.${field.jsonKey}`,
+          message: `The key "${field.jsonKey}" competes with another field in ${modelName}, so it is named ${field.name}. Reading and writing JSON still uses the original key.`,
+        },
+      ];
+    }
+    return [];
+  });
+}
+
 export function generateDart(
   schema: SchemaNode,
   options: GeneratorOptions,
   sourceWarnings: readonly SchemaWarning[] = [],
 ): GenerationResult {
-  const registry = createModelRegistry(schema, options.rootName);
-  const rootTypeName = toPascalCase(options.rootName, "RootModel");
-  const parts = registry.models.map((model) =>
-    modelCode(model.name, model.node, registry, options),
-  );
+  const registry = createModelRegistry(schema, options.rootName, "dart");
+  const rootTypeName = safeClassName(options.rootName, "dart", "RootModel");
+  const warnings: SchemaWarning[] = [...sourceWarnings];
+
+  const referenced = new Set<string>();
+  const dropped = new Set<string>();
+  collectReferences(schema, registry, referenced, dropped);
+  const models = registry.models.filter((model) => referenced.has(model.name));
+
+  for (const model of registry.models) {
+    if (!referenced.has(model.name) && dropped.has(model.name)) {
+      warnings.push({
+        code: "dropped-union-shape",
+        path: model.path,
+        message: `The value at ${model.path} is sometimes an object and sometimes another type. Dart cannot express that union, so the value uses ${unknownType(options)} and no class was generated for it.`,
+      });
+    }
+  }
+
+  const parts = models.map((model) => {
+    const fields = planFields(model.node.properties, "dart", [
+      model.name,
+      ...OBJECT_MEMBERS,
+    ]);
+    warnings.push(...identifierWarnings(model.name, model.path, fields));
+    return modelCode(model.name, model.node, fields, registry, options);
+  });
 
   if (!registry.rootObjectName) {
     parts.push(
@@ -265,8 +420,8 @@ export function generateDart(
 
   return {
     code: `${parts.join("\n\n")}\n`,
-    modelCount: registry.models.length,
-    warnings: sourceWarnings,
+    modelCount: models.length,
+    warnings,
     extension: "dart",
   };
 }
