@@ -1,59 +1,67 @@
-import vinext from "vinext";
-import { defineConfig } from "vite";
-import hostingConfig from "./.openai/hosting.json";
-import { sites } from "./build/sites-vite-plugin";
+import path from "node:path";
+import react from "@vitejs/plugin-react";
+import { defineConfig, type Plugin } from "vite";
 
-const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
-  "00000000-0000-4000-8000-000000000000";
+/**
+ * The production page declares a strict Content Security Policy. It is injected
+ * at build time only, because the dev server needs a websocket for hot reload and
+ * `connect-src 'none'` would block it.
+ *
+ * `frame-ancestors` is deliberately absent: browsers ignore it in a `<meta>`
+ * element and log a console error. A host that wants it has to send it as a
+ * response header, which docs/deployment.md explains.
+ */
+const PRODUCTION_CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self'",
+  "img-src 'self' data:",
+  "font-src 'self'",
+  "connect-src 'none'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+].join("; ");
 
-const { d1, r2 } = hostingConfig;
-
-// macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
-const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
-
-const localBindingConfig = {
-  main: "./worker/index.ts",
-  compatibility_flags: ["nodejs_compat"],
-  d1_databases: d1
-    ? [
-        {
-          binding: d1,
-          database_name: "site-creator-d1",
-          database_id: SITE_CREATOR_PLACEHOLDER_DATABASE_ID,
-        },
-      ]
-    : [],
-  r2_buckets: r2
-    ? [
-        {
-          binding: r2,
-          bucket_name: "site-creator-r2",
-        },
-      ]
-    : [],
-};
-
-export default defineConfig(async () => {
-  // Keep Wrangler and Miniflare state project-local. These are non-secret tool
-  // settings; application environment belongs in ignored `.env*` files.
-  process.env.WRANGLER_WRITE_LOGS ??= "false";
-  process.env.WRANGLER_LOG_PATH ??= ".wrangler/logs";
-  process.env.MINIFLARE_REGISTRY_PATH ??= ".wrangler/registry";
-
-  // Wrangler snapshots its log path while the Cloudflare plugin is imported.
-  const { cloudflare } = await import("@cloudflare/vite-plugin");
-
+function contentSecurityPolicy(): Plugin {
   return {
-    server: isCodexSeatbeltSandbox
-      ? { watch: { useFsEvents: false, usePolling: true } }
-      : undefined,
-    plugins: [
-      vinext(),
-      sites(),
-      cloudflare({
-        viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
-        config: localBindingConfig,
-      }),
-    ],
+    name: "json2model-csp",
+    apply: "build",
+    transformIndexHtml: {
+      order: "post",
+      handler(html: string) {
+        return html.replace(
+          "<head>",
+          `<head>\n    <meta http-equiv="Content-Security-Policy" content="${PRODUCTION_CSP}" />`,
+        );
+      },
+    },
   };
+}
+
+export default defineConfig({
+  // Relative asset paths let the same build run from a domain root, from a
+  // GitHub Pages repository subpath, and from the packaged desktop shell.
+  base: "./",
+  plugins: [react(), contentSecurityPolicy()],
+  resolve: {
+    alias: {
+      "@": path.resolve(import.meta.dirname),
+    },
+  },
+  server: {
+    host: "127.0.0.1",
+    port: 5173,
+  },
+  preview: {
+    host: "127.0.0.1",
+    port: 4173,
+  },
+  build: {
+    outDir: "dist",
+    emptyOutDir: true,
+    // Source maps would publish the readable component tree next to the app.
+    sourcemap: false,
+    target: "es2022",
+  },
 });

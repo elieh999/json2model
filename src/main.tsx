@@ -1,8 +1,8 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import "@/app/globals.css";
 import { ConverterApp } from "@/src/components/ConverterApp";
 import { ErrorBoundary } from "@/src/components/ErrorBoundary";
+import "@/src/styles/globals.css";
 
 const root = document.getElementById("root");
 if (!root) {
