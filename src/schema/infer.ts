@@ -5,6 +5,7 @@ import type {
   SchemaNode,
   SchemaProperty,
   SchemaWarning,
+  SchemaWarningCode,
 } from "./types";
 import { Json2ModelError } from "./types";
 
@@ -18,6 +19,17 @@ export const DEFAULT_INFERENCE_OPTIONS: InferenceOptions = {
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const DATETIME_PATTERN =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/i;
+
+/**
+ * Code point ordering. `localeCompare` depends on the host locale data, and
+ * generated output has to be identical in every browser and in Node.
+ */
+function compareStrings(left: string, right: string): number {
+  if (left < right) {
+    return -1;
+  }
+  return left > right ? 1 : 0;
+}
 
 function schemaSignature(node: SchemaNode): string {
   switch (node.kind) {
@@ -48,7 +60,7 @@ function flattenVariants(nodes: readonly SchemaNode[]): readonly SchemaNode[] {
     unique.set(schemaSignature(node), node);
   }
   return [...unique.entries()]
-    .sort(([left], [right]) => left.localeCompare(right))
+    .sort(([left], [right]) => compareStrings(left, right))
     .map(([, node]) => node);
 }
 
@@ -77,7 +89,7 @@ function mergeObjectNodes(
 
   const keys = preservePropertyOrder
     ? propertyOrder
-    : [...propertyOrder].sort((left, right) => left.localeCompare(right));
+    : [...propertyOrder].sort(compareStrings);
   const properties: SchemaProperty[] = keys.map((jsonKey) => ({
     jsonKey,
     node: mergeNodes(propertyNodes.get(jsonKey) ?? [], preservePropertyOrder),
@@ -96,8 +108,9 @@ export function mergeNodes(
   }
 
   const variants = flattenVariants(nodes);
-  if (variants.length === 1) {
-    return variants[0];
+  const [firstVariant] = variants;
+  if (variants.length === 1 && firstVariant) {
+    return firstVariant;
   }
 
   const nonNull = variants.filter(
@@ -107,19 +120,19 @@ export function mergeNodes(
     (node) => node.kind === "primitive" && node.type === "null",
   );
 
-  if (nonNull.length > 0 && nonNull.every((node) => node.kind === "object")) {
-    const merged = mergeObjectNodes(
-      nonNull as readonly ObjectSchemaNode[],
-      preservePropertyOrder,
-    );
+  const objects = nonNull.filter(
+    (node): node is ObjectSchemaNode => node.kind === "object",
+  );
+  if (objects.length > 0 && objects.length === nonNull.length) {
+    const merged = mergeObjectNodes(objects, preservePropertyOrder);
     return nullNode ? { kind: "union", variants: [merged, nullNode] } : merged;
   }
 
-  if (nonNull.every((node) => node.kind === "array")) {
-    const arrays = nonNull.filter(
-      (node): node is Extract<SchemaNode, { kind: "array" }> =>
-        node.kind === "array",
-    );
+  const arrays = nonNull.filter(
+    (node): node is Extract<SchemaNode, { kind: "array" }> =>
+      node.kind === "array",
+  );
+  if (arrays.length > 0 && arrays.length === nonNull.length) {
     const element = mergeNodes(
       arrays.map((array) => array.element),
       preservePropertyOrder,
@@ -139,12 +152,16 @@ export function mergeNodes(
     (node) => node.kind === "primitive" && node.type === "number",
   );
   if (hasInteger && hasNumber) {
+    // A whole number and a decimal in the same position are both numbers, so
+    // the wider floating point type covers them.
     const withoutInteger = variants.filter(
       (node) => !(node.kind === "primitive" && node.type === "integer"),
     );
-    return withoutInteger.length === 1
-      ? withoutInteger[0]
-      : { kind: "union", variants: withoutInteger };
+    const [onlyRemaining] = withoutInteger;
+    if (withoutInteger.length === 1 && onlyRemaining) {
+      return onlyRemaining;
+    }
+    return { kind: "union", variants: withoutInteger };
   }
 
   return { kind: "union", variants };
@@ -152,8 +169,38 @@ export function mergeNodes(
 
 interface InferenceContext {
   readonly options: InferenceOptions;
-  readonly warnings: SchemaWarning[];
+  /** Keyed by code and collapsed path so repeated array elements merge. */
+  readonly warnings: Map<string, SchemaWarning>;
   nodeCount: number;
+}
+
+/** `$.items[3].tags` becomes `$.items[].tags` so array elements share a key. */
+function collapseArrayIndexes(path: string): string {
+  return path.replace(/\[\d+\]/g, "[]");
+}
+
+function addWarning(
+  context: InferenceContext,
+  code: SchemaWarningCode,
+  path: string,
+  message: (displayPath: string) => string,
+): void {
+  const displayPath = collapseArrayIndexes(path);
+  const key = `${code}:${displayPath}`;
+  const existing = context.warnings.get(key);
+  if (existing) {
+    context.warnings.set(key, {
+      ...existing,
+      occurrences: (existing.occurrences ?? 1) + 1,
+    });
+    return;
+  }
+  context.warnings.set(key, {
+    code,
+    path: displayPath,
+    message: message(displayPath),
+    occurrences: 1,
+  });
 }
 
 function inferNode(
@@ -183,11 +230,13 @@ function inferNode(
 
   if (Array.isArray(value)) {
     if (value.length === 0) {
-      context.warnings.push({
-        code: "empty-array",
+      addWarning(
+        context,
+        "empty-array",
         path,
-        message: `The array at ${path} is empty, so its element type could not be inferred.`,
-      });
+        (at) =>
+          `The array at ${at} is empty, so its element type could not be inferred.`,
+      );
       return {
         kind: "array",
         element: {
@@ -203,11 +252,13 @@ function inferNode(
     );
     const element = mergeNodes(inferred, context.options.preservePropertyOrder);
     if (element.kind === "union") {
-      context.warnings.push({
-        code: "mixed-array",
+      addWarning(
+        context,
+        "mixed-array",
         path,
-        message: `The values in ${path} use different types. A safe union or fallback type was generated.`,
-      });
+        (at) =>
+          `The values in ${at} use different types. A safe union or fallback type was generated.`,
+      );
     }
     return { kind: "array", element, empty: false };
   }
@@ -215,15 +266,17 @@ function inferNode(
   if (typeof value === "object") {
     const entries = Object.entries(value as Record<string, unknown>);
     if (entries.length === 0) {
-      context.warnings.push({
-        code: "empty-object",
+      addWarning(
+        context,
+        "empty-object",
         path,
-        message: `The object at ${path} is empty, so a generic object type was generated.`,
-      });
+        (at) =>
+          `The object at ${at} is empty, so a generic object type was generated.`,
+      );
     }
     const orderedEntries = context.options.preservePropertyOrder
       ? entries
-      : [...entries].sort(([left], [right]) => left.localeCompare(right));
+      : [...entries].sort(([left], [right]) => compareStrings(left, right));
     return {
       kind: "object",
       empty: entries.length === 0,
@@ -274,11 +327,9 @@ export function inferSchema(
   const resolvedOptions = { ...DEFAULT_INFERENCE_OPTIONS, ...options };
   const context: InferenceContext = {
     options: resolvedOptions,
-    warnings: [],
+    warnings: new Map(),
     nodeCount: 0,
   };
-  return {
-    schema: inferNode(value, "$", 0, context),
-    warnings: context.warnings,
-  };
+  const schema = inferNode(value, "$", 0, context);
+  return { schema, warnings: [...context.warnings.values()] };
 }

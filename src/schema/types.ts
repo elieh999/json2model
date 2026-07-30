@@ -47,16 +47,26 @@ export type SchemaNode =
   | ObjectSchemaNode
   | UnionSchemaNode;
 
+export type SchemaWarningCode =
+  | "empty-array"
+  | "empty-object"
+  | "mixed-array"
+  | "large-integer"
+  | "unsafe-structure"
+  | "renamed-typescript-key"
+  | "generated-identifier"
+  | "dropped-union-shape";
+
 export interface SchemaWarning {
-  readonly code:
-    | "empty-array"
-    | "empty-object"
-    | "mixed-array"
-    | "large-integer"
-    | "unsafe-structure"
-    | "renamed-typescript-key";
+  readonly code: SchemaWarningCode;
   readonly path: string;
   readonly message: string;
+  /**
+   * How many places produced this warning. Inference reports one entry per
+   * distinct reason rather than one per visited value, so a 5,000 element array
+   * with the same empty field does not produce 5,000 identical lines.
+   */
+  readonly occurrences?: number;
 }
 
 export interface InferenceResult {
@@ -80,6 +90,8 @@ export interface JsonErrorDetails {
   readonly message: string;
   readonly line: number | null;
   readonly column: number | null;
+  /** Distinguishes a size refusal from a syntax problem. */
+  readonly code?: "syntax" | "input-too-large";
 }
 
 export type ParseResult =
