@@ -1,0 +1,9 @@
+{
+  "first-name": "Ada",
+  "first_name": "Grace",
+  "firstName": "Katherine",
+  "FIRST NAME": "Dorothy",
+  "user id": 1,
+  "user-id": 2,
+  "nested": { "a-b": 1, "a_b": 2 }
+}

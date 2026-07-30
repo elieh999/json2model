@@ -1,0 +1,20 @@
+{
+  "level1": {
+    "level2": {
+      "level3": {
+        "level4": {
+          "level5": {
+            "level6": {
+              "level7": {
+                "level8": {
+                  "value": "deep",
+                  "items": [{ "level9": { "level10": { "leaf": 1 } } }]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

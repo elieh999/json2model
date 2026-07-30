@@ -1,0 +1,13 @@
+{
+  "class": "reserved in every target",
+  "return": 1,
+  "for": true,
+  "in": null,
+  "None": "python keyword",
+  "True": 2,
+  "interface": "typescript keyword",
+  "dynamic": "dart keyword",
+  "final": 3,
+  "with": { "import": "nested reserved word", "def": 4 },
+  "lambda": [{ "global": "reserved", "pass": false }]
+}
