@@ -1,3 +1,13 @@
+/**
+ * Identifier rules shared by every generator.
+ *
+ * The original JSON key is never changed here. Generators keep it for
+ * serialization and use these helpers only to pick a legal name in the target
+ * language.
+ */
+
+export type Language = "dart" | "typescript" | "python";
+
 const WORD_PATTERN = /[\p{L}\p{N}]+/gu;
 
 const NUMBER_WORDS: Record<string, string> = {
@@ -13,22 +23,21 @@ const NUMBER_WORDS: Record<string, string> = {
   "9": "nine",
 };
 
-const RESERVED: Record<
-  "dart" | "typescript" | "python",
-  ReadonlySet<string>
-> = {
+const RESERVED: Record<Language, ReadonlySet<string>> = {
   dart: new Set([
     "abstract",
     "as",
     "assert",
     "async",
     "await",
+    "base",
     "break",
     "case",
     "catch",
     "class",
     "const",
     "continue",
+    "covariant",
     "default",
     "deferred",
     "do",
@@ -64,6 +73,7 @@ const RESERVED: Record<
     "required",
     "rethrow",
     "return",
+    "sealed",
     "set",
     "show",
     "static",
@@ -77,6 +87,7 @@ const RESERVED: Record<
     "typedef",
     "var",
     "void",
+    "when",
     "while",
     "with",
     "yield",
@@ -182,23 +193,90 @@ const RESERVED: Record<
   ]),
 };
 
+/**
+ * Names a generated class must not take, because they resolve in the same scope
+ * as the generated declarations. Only PascalCase entries are listed: a class name
+ * always starts from capitalized words, so a lowercase builtin such as Python's
+ * `list` can never be produced.
+ */
+const RESERVED_CLASS_NAMES: Record<Language, ReadonlySet<string>> = {
+  dart: new Set([
+    "DateTime",
+    "Enum",
+    "Function",
+    "Iterable",
+    "List",
+    "Map",
+    "Never",
+    "Null",
+    "Object",
+    "Record",
+    "Set",
+    "String",
+    "Symbol",
+    "Type",
+  ]),
+  typescript: new Set([
+    "Array",
+    "Boolean",
+    "Date",
+    "Error",
+    "Function",
+    "Map",
+    "Number",
+    "Object",
+    "Promise",
+    "Record",
+    "Set",
+    "String",
+    "Symbol",
+  ]),
+  python: new Set([
+    // `RootModel` is deliberately absent. It is the default root name, and the
+    // Python generator imports Pydantic's `RootModel` under an alias when the two
+    // would collide, so the generated class keeps the name the user asked for.
+    "BaseModel",
+    "ConfigDict",
+    "Field",
+  ]),
+};
+
+/**
+ * Members a generated Pydantic model already carries. A field with one of these
+ * names is swallowed by Pydantic instead of becoming a model field, so it has to
+ * be renamed and reached through its alias.
+ */
+const PYDANTIC_RESERVED_MEMBERS: ReadonlySet<string> = new Set([
+  "copy",
+  "dict",
+  "json",
+  "schema",
+]);
+
+const PYDANTIC_PROTECTED_PREFIX = "model_";
+
 function words(value: string): string[] {
-  return (
-    value
-      .normalize("NFKD")
-      .match(WORD_PATTERN)
-      ?.flatMap((part) =>
-        part
-          .replace(/([\p{Ll}\d])([\p{Lu}])/gu, "$1 $2")
-          .split(/\s+/)
-          .filter(Boolean)
-          .flatMap((word) => {
-            const leadingNumber = /^(\d+)(\p{L}.*)$/u.exec(word);
-            return leadingNumber
-              ? [...leadingNumber[1], leadingNumber[2]]
-              : [word];
-          }),
-      ) ?? []
+  // NFKD splits an accented letter into a base letter and a combining mark.
+  // Dropping the marks keeps "Zürich" as one word rather than "Zu" and "rich".
+  const normalized = value.normalize("NFKD").replace(/\p{M}+/gu, "");
+  const matches = normalized.match(WORD_PATTERN);
+  if (!matches) {
+    return [];
+  }
+  return matches.flatMap((part) =>
+    part
+      // Split camelCase and PascalCase runs into separate words.
+      .replace(/([\p{Ll}\d])([\p{Lu}])/gu, "$1 $2")
+      .split(/\s+/)
+      .filter(Boolean)
+      .flatMap((word) => {
+        // "2fa" becomes ["2", "fa"] so the leading digit can be spelled out. A
+        // trailing group of digits such as "field_2499" is left alone.
+        const leadingNumber = /^(\d+)(\p{L}.*)$/u.exec(word);
+        const digits = leadingNumber?.[1];
+        const rest = leadingNumber?.[2];
+        return digits && rest ? [...digits, rest] : [word];
+      }),
   );
 }
 
@@ -209,35 +287,111 @@ function normalizedWord(word: string): string {
   return word.toLocaleLowerCase("en-US");
 }
 
+function capitalize(value: string): string {
+  return value.charAt(0).toLocaleUpperCase("en-US") + value.slice(1);
+}
+
+/**
+ * Dart identifiers accept ASCII letters, digits, `_` and `$` only, so non ASCII
+ * letters are dropped. `NFKD` has already reduced accented Latin letters to
+ * their base form by this point, so this only affects other scripts.
+ */
+function toAsciiWords(parts: readonly string[]): string[] {
+  return parts
+    .map((part) => part.replace(/[^\p{ASCII}]/gu, ""))
+    .filter((part) => part.length > 0);
+}
+
+function identifierWords(value: string, language: Language): string[] {
+  const parts = words(value).map(normalizedWord);
+  return language === "dart" ? toAsciiWords(parts) : parts;
+}
+
 export function toPascalCase(value: string, fallback = "Model"): string {
-  const parts = words(value);
-  const joined = parts
-    .map(normalizedWord)
-    .map((part) => part.charAt(0).toLocaleUpperCase("en-US") + part.slice(1))
-    .join("");
+  const joined = words(value).map(normalizedWord).map(capitalize).join("");
   const candidate = joined || fallback;
   return /^\p{N}/u.test(candidate) ? `Model${candidate}` : candidate;
 }
 
 export function toCamelCase(value: string, fallback = "value"): string {
-  const pascal = toPascalCase(value, toPascalCase(fallback));
-  const candidate =
-    pascal.charAt(0).toLocaleLowerCase("en-US") + pascal.slice(1);
-  return /^\p{N}/u.test(candidate) ? `value${candidate}` : candidate;
+  const joined = words(value)
+    .map(normalizedWord)
+    .map((part, index) => (index === 0 ? part : capitalize(part)))
+    .join("");
+  const candidate = joined || fallback;
+  return /^\p{N}/u.test(candidate)
+    ? `field${capitalize(candidate)}`
+    : candidate;
 }
 
 export function toSnakeCase(value: string, fallback = "value"): string {
   const candidate = words(value).map(normalizedWord).join("_") || fallback;
-  return /^\p{N}/u.test(candidate) ? `value_${candidate}` : candidate;
+  return /^\p{N}/u.test(candidate) ? `field_${candidate}` : candidate;
 }
 
-export function safePropertyName(
+function escapeReservedProperty(name: string, language: Language): string {
+  if (RESERVED[language].has(name)) {
+    return `${name}_`;
+  }
+  if (
+    language === "python" &&
+    (name.startsWith(PYDANTIC_PROTECTED_PREFIX) ||
+      PYDANTIC_RESERVED_MEMBERS.has(name))
+  ) {
+    return `field_${name}`;
+  }
+  return name;
+}
+
+/**
+ * Returns a legal property name for the language, or `null` when the key cannot
+ * be expressed as an identifier at all. Dart is the only target that rejects non
+ * ASCII keys, so callers must supply a generated name in that case.
+ */
+export function propertyNameFor(
+  jsonKey: string,
+  language: Language,
+): string | null {
+  const parts = identifierWords(jsonKey, language);
+  if (parts.length === 0) {
+    return null;
+  }
+  const joined =
+    language === "python"
+      ? parts.join("_")
+      : parts
+          .map((part, index) => (index === 0 ? part : capitalize(part)))
+          .join("");
+  if (joined.length === 0) {
+    return null;
+  }
+  const prefixed = /^\p{N}/u.test(joined)
+    ? language === "python"
+      ? `field_${joined}`
+      : `field${capitalize(joined)}`
+    : joined;
+  return escapeReservedProperty(prefixed, language);
+}
+
+export function safePropertyName(value: string, language: Language): string {
+  return propertyNameFor(value, language) ?? "field";
+}
+
+export function safeClassName(
   value: string,
-  language: "dart" | "typescript" | "python",
+  language: Language,
+  fallback = "Model",
 ): string {
-  const candidate =
-    language === "python" ? toSnakeCase(value) : toCamelCase(value);
-  return RESERVED[language].has(candidate) ? `${candidate}_` : candidate;
+  const parts = identifierWords(value, language).map(capitalize);
+  const joined = parts.join("") || fallback;
+  const candidate = /^\p{N}/u.test(joined) ? `Model${joined}` : joined;
+  if (
+    RESERVED[language].has(candidate) ||
+    RESERVED_CLASS_NAMES[language].has(candidate)
+  ) {
+    return `${candidate}Model`;
+  }
+  return candidate;
 }
 
 export function uniqueName(base: string, used: Set<string>): string {
@@ -251,20 +405,31 @@ export function uniqueName(base: string, used: Set<string>): string {
   return candidate;
 }
 
-export function isValidIdentifier(
-  value: string,
-  language: "dart" | "typescript" | "python",
-): boolean {
-  return (
-    /^[\p{L}_$][\p{L}\p{N}_$]*$/u.test(value) && !RESERVED[language].has(value)
-  );
+export function isValidIdentifier(value: string, language: Language): boolean {
+  const pattern =
+    language === "dart"
+      ? /^[A-Za-z_$][A-Za-z0-9_$]*$/u
+      : /^[\p{L}_$][\p{L}\p{N}_$]*$/u;
+  return pattern.test(value) && !RESERVED[language].has(value);
 }
 
-export function quoteString(value: string, quote: "'" | '"' = "'"): string {
-  const escaped = value
+/**
+ * Quotes a string for the target language. Dart interpolates `$` inside string
+ * literals, so it has to be escaped there.
+ */
+export function quoteString(
+  value: string,
+  quote: "'" | '"' = "'",
+  options: { readonly escapeDollar?: boolean } = {},
+): string {
+  let escaped = value
     .replaceAll("\\", "\\\\")
     .replaceAll(quote, `\\${quote}`)
     .replaceAll("\n", "\\n")
-    .replaceAll("\r", "\\r");
+    .replaceAll("\r", "\\r")
+    .replaceAll("\t", "\\t");
+  if (options.escapeDollar) {
+    escaped = escaped.replaceAll("$", "\\$");
+  }
   return `${quote}${escaped}${quote}`;
 }

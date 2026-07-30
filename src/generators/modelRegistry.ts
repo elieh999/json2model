@@ -1,4 +1,4 @@
-import { toPascalCase, uniqueName } from "@/src/naming/naming";
+import { safeClassName, uniqueName, type Language } from "@/src/naming/naming";
 import type { ObjectSchemaNode, SchemaNode } from "@/src/schema/types";
 
 export interface ModelDefinition {
@@ -14,31 +14,41 @@ export interface ModelRegistry {
 }
 
 function singularize(value: string): string {
-  if (value.toLocaleLowerCase("en-US").endsWith("ies")) {
+  const lower = value.toLocaleLowerCase("en-US");
+  if (lower.endsWith("ies")) {
     return `${value.slice(0, -3)}y`;
   }
-  if (
-    value.toLocaleLowerCase("en-US").endsWith("s") &&
-    !value.toLocaleLowerCase("en-US").endsWith("ss")
-  ) {
+  if (lower.endsWith("s") && !lower.endsWith("ss")) {
     return value.slice(0, -1);
   }
   return value;
 }
 
-function childNameHint(propertyName: string, isArrayElement: boolean): string {
-  const value = isArrayElement ? singularize(propertyName) : propertyName;
-  return toPascalCase(value, "NestedModel");
-}
-
+/**
+ * Walks the schema once and assigns one stable class name to every nonempty
+ * object node. Names come from the property path, so the same input and settings
+ * always produce the same declarations in the same order.
+ *
+ * The registry is language aware because the legal character set and the set of
+ * names that would shadow a builtin differ per target.
+ */
 export function createModelRegistry(
   schema: SchemaNode,
   requestedRootName: string,
+  language: Language,
 ): ModelRegistry {
   const models: ModelDefinition[] = [];
   const namesByNode = new Map<ObjectSchemaNode, string>();
   const usedNames = new Set<string>();
-  const rootName = toPascalCase(requestedRootName, "RootModel");
+  const rootName = safeClassName(requestedRootName, language, "RootModel");
+
+  function childNameHint(
+    propertyName: string,
+    isArrayElement: boolean,
+  ): string {
+    const value = isArrayElement ? singularize(propertyName) : propertyName;
+    return safeClassName(value, language, "NestedModel");
+  }
 
   function register(
     node: ObjectSchemaNode,
@@ -49,7 +59,10 @@ export function createModelRegistry(
     if (knownName) {
       return knownName;
     }
-    const name = uniqueName(toPascalCase(baseName, "NestedModel"), usedNames);
+    const name = uniqueName(
+      safeClassName(baseName, language, "NestedModel"),
+      usedNames,
+    );
     namesByNode.set(node, name);
     models.push({ name, node, path });
 
@@ -64,32 +77,33 @@ export function createModelRegistry(
   }
 
   function visit(node: SchemaNode, baseName: string, path: string): void {
-    if (node.kind === "object") {
-      if (!node.empty) {
-        register(node, baseName, path);
-      }
-      return;
-    }
-    if (node.kind === "array") {
-      visit(node.element, baseName, `${path}[]`);
-      return;
-    }
-    if (node.kind === "union") {
-      for (const variant of node.variants) {
-        visit(variant, baseName, path);
-      }
+    switch (node.kind) {
+      case "object":
+        if (!node.empty) {
+          register(node, baseName, path);
+        }
+        return;
+      case "array":
+        visit(node.element, baseName, `${path}[]`);
+        return;
+      case "union":
+        for (const variant of node.variants) {
+          visit(variant, baseName, path);
+        }
+        return;
+      case "primitive":
+      case "unknown":
+        return;
     }
   }
 
   let rootObjectName: string | null = null;
   if (schema.kind === "object" && !schema.empty) {
     rootObjectName = register(schema, rootName, "$");
+  } else if (schema.kind === "array") {
+    visit(schema.element, `${rootName}Item`, "$[]");
   } else {
-    if (schema.kind === "array") {
-      visit(schema.element, `${rootName}Item`, "$[]");
-    } else {
-      visit(schema, `${rootName}Value`, "$");
-    }
+    visit(schema, `${rootName}Value`, "$");
   }
 
   return {
