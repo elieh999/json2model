@@ -117,11 +117,25 @@ Generated code and JSON are rendered as React text nodes. The project does not u
 `dangerouslySetInnerHTML`, `eval`, or any input derived file path. The production
 build injects a Content Security Policy with `connect-src 'none'`.
 
-## Desktop shell
+## The two builds
 
-`electron/main.cjs` loads the same built page from the local filesystem. The
-renderer runs with context isolation on, Node integration off, and the sandbox
-enabled. `electron/preload.cjs` exposes one frozen function that writes to the
-clipboard, with a length limit checked in the main process, because clipboard access
-from a `file://` page is unreliable. Navigation away from the local file and new
-window requests are both blocked.
+`npm run build` produces the hosted site in `dist`: a small HTML file with a module
+script and a stylesheet beside it, which is what GitHub Pages serves.
+
+`npm run build:standalone` produces one self contained file instead. Two things
+differ, both forced by the file protocol:
+
+- The bundle is emitted as an IIFE rather than a module, because a browser refuses
+  to load a module script from `file://`, and it is placed at the end of the body,
+  because an inline classic script is not deferred and would run before the root
+  element exists.
+- The Content Security Policy allows `'unsafe-inline'` for the script and the style
+  it inlines, and denies everything else. `connect-src 'none'` is unchanged, which
+  is the directive that makes uploading a pasted document impossible.
+
+Inlining uses a replacement function rather than a replacement string. Minified
+React contains `$'` and `$&`, and `String.replace` would expand those as patterns
+and splice the document into the middle of the script.
+
+The clipboard helper falls back to a selection based copy when the async clipboard
+API is unavailable, which can happen on a page opened directly from disk.

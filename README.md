@@ -188,8 +188,8 @@ converter itself.
 | `npm run validate:typescript` | Compile the generated TypeScript with strict settings  |
 | `npm run validate:python`     | Ruff and Pydantic over the generated Python            |
 | `npm run validate:dart`       | Dart analyzer and a round trip over the generated Dart |
-| `npm run desktop:build`       | Package the Windows desktop application                |
-| `npm run desktop:smoke`       | Drive the packaged application and check it converts   |
+| `npm run build:standalone`    | Build one self contained HTML file                     |
+| `npm run deliverable`         | Write `deliverable/` with that file and a readme       |
 
 Browser tests need their browser once:
 
@@ -240,16 +240,25 @@ all.
 succeeds on `main`. See [docs/deployment.md](docs/deployment.md) for other hosts
 and for the response headers a host can add.
 
-## Windows desktop application
+## Offline single file build
 
-`npm run desktop:build` wraps the same static build in Electron and writes
-`release/win-unpacked`. `JSON2Model.exe` there opens the converter in its own
-window with no runtime to install and no internet connection needed. The renderer
-runs with context isolation on, Node integration off, and the Electron sandbox
-enabled; the only thing exposed to the page is a size limited clipboard write.
+```bash
+npm run deliverable
+```
 
-The executable is not code signed, so Windows SmartScreen shows an unknown
-publisher warning.
+This writes `deliverable/JSON2Model.html`, one self contained file of about
+240 KB with the script and the stylesheet inlined. Opening it runs the whole
+converter in the browser you already have: no install, no server, no internet
+connection. You can email it, put it on a USB stick, or keep it next to a project.
+
+An earlier version of this project shipped the same application wrapped in
+Electron, which meant handing someone 350 MB of bundled Chromium and an executable
+that Windows SmartScreen warns about. The single file does the same job, is about
+1,400 times smaller, and works on any operating system.
+
+The file protocol will not load a module script, so this build is emitted as a
+classic script and inlined at the end of the body. Its Content Security Policy
+still sets `connect-src 'none'`, so it cannot make a network request.
 
 ## Project structure
 
@@ -261,8 +270,7 @@ src/parser/             JSON parsing, friendly errors, input limit
 src/schema/             Language independent schema inference
 src/hooks/              Preference storage
 src/styles/             Global stylesheet
-electron/               Desktop shell and preload bridge
-scripts/                Fixture generation, screenshots, desktop smoke test
+scripts/                Fixture generation, screenshots, single file deliverable
 tests/unit/             Parser, schema, naming, generator, storage tests
 tests/component/        React interaction tests
 tests/browser/          Playwright tests

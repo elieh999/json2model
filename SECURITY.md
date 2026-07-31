@@ -38,14 +38,12 @@ Resource limits keep a hostile document from hanging the page: 2,000,000 input
 characters, 80 levels of nesting, and 50,000 visited values. Each limit produces a
 readable message rather than unbounded work.
 
-## Desktop application
+## Single file build
 
-The packaged Electron application loads the same local files. The renderer runs with
-context isolation on, Node integration off, and the Electron sandbox enabled. The
-preload script exposes exactly one frozen function, a clipboard write whose length is
-checked in the main process. Navigation away from the local page and requests to open
-new windows are blocked, and an external `https` link is handed to the system browser
-rather than opened in the application.
+`npm run deliverable` produces one HTML file that runs from disk. It carries its own
+Content Security Policy with `default-src 'none'` and `connect-src 'none'`, so it
+cannot reach the network at all. The script and stylesheet are inlined, which is why
+that policy allows `'unsafe-inline'` for those two directives and nothing else.
 
-The executable is not code signed. Windows SmartScreen will warn about an unknown
-publisher, which is expected for an independent build.
+There is no bundled runtime and no executable, so nothing has to be trusted beyond
+the browser already installed on the machine.

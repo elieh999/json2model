@@ -6,13 +6,13 @@
   "author": "JSON2Model contributors",
   "license": "MIT",
   "type": "module",
-  "main": "electron/main.cjs",
   "engines": {
     "node": ">=22.13.0"
   },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:standalone": "cross-env STANDALONE=1 vite build",
     "preview": "vite preview",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
@@ -27,8 +27,7 @@
     "validate:typescript": "npm run fixtures:generate && tsc --project tests/generated/typescript/tsconfig.json",
     "validate:python": "npm run fixtures:generate && python -m ruff check tests/generated/python && python tests/generated/python/validate.py",
     "validate:dart": "npm run fixtures:generate && dart analyze tests/generated/dart && dart run tests/generated/dart/round_trip.dart",
-    "desktop:build": "npm run build && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win --x64 --dir",
-    "desktop:smoke": "node scripts/smoke-desktop.mjs",
+    "deliverable": "npm run build:standalone && node scripts/make-deliverable.mjs",
     "verify": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run build"
   },
   "dependencies": {
@@ -46,8 +45,6 @@
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.2",
     "cross-env": "10.1.0",
-    "electron": "43.2.0",
-    "electron-builder": "26.15.3",
     "eslint": "9.39.4",
     "eslint-plugin-jsx-a11y": "6.10.2",
     "eslint-plugin-react": "7.37.5",
@@ -74,36 +71,5 @@
   },
   "overrides": {
     "@babel/core": "^7.29.7"
-  },
-  "build": {
-    "appId": "com.json2model.desktop",
-    "productName": "JSON2Model",
-    "copyright": "Copyright © 2026 JSON2Model contributors",
-    "compression": "maximum",
-    "npmRebuild": false,
-    "directories": {
-      "output": "release",
-      "buildResources": "build-resources"
-    },
-    "files": [
-      "dist/**/*",
-      "electron/**/*",
-      "package.json",
-      "!node_modules/**/*",
-      "!**/*.map"
-    ],
-    "extraFiles": [
-      {
-        "from": "electron/README.txt",
-        "to": "README.txt"
-      },
-      {
-        "from": "LICENSE",
-        "to": "LICENSE.txt"
-      }
-    ],
-    "win": {
-      "icon": "build-resources/icon.ico"
-    }
   }
 }

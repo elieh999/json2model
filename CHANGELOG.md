@@ -27,5 +27,6 @@ TypeScript, or Pydantic 2 models entirely in the browser.
 9. Unit, component, and browser tests, plus generated code validation through the
    TypeScript compiler, Ruff, Pydantic 2, and the Dart analyzer with a serialization
    round trip.
-10. A self contained Windows desktop application built from the same page.
+10. A single file offline build, one HTML document of about 240 KB that runs by
+    being opened, with no install and no network access.
 11. Continuous integration and a GitHub Pages deployment that waits for it to pass.

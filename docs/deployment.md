@@ -57,17 +57,13 @@ Cross-Origin-Opener-Policy: same-origin
 `frame-ancestors` is deliberately not in the meta element, because browsers ignore it
 there and log a console error.
 
-## Windows desktop application
+## Giving someone a copy to run offline
 
 ```bash
-npm run desktop:build
-npm run desktop:smoke
+npm run deliverable
 ```
 
-The first command builds the static site and wraps it with Electron, writing
-`release/win-unpacked`. The second launches the packaged executable, converts a
-document in it, and checks the clipboard bridge.
-
-To hand the folder to someone, ship the whole `win-unpacked` directory. The DLL and
-resource files beside `JSON2Model.exe` are part of the application. The executable is
-not code signed, so SmartScreen shows an unknown publisher warning.
+This writes `deliverable/` containing `JSON2Model.html`, about 240 KB, and a short
+readme. The HTML file has the script and stylesheet inlined, so it runs on its own
+by being opened. Send that one file and nothing else is needed: no install, no
+server, no internet connection, and no operating system restriction.

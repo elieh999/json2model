@@ -34,6 +34,16 @@ jobs:
           test -f dist/index.html
           grep -q "Content-Security-Policy" dist/index.html
           test -z "$(find dist -name '*.map' -print -quit)"
+      - run: npm run build:standalone
+      - name: Check the single file build
+        run: |
+          test -f dist-standalone/JSON2Model.html
+          # One file, nothing beside it, and no external reference in it.
+          test "$(find dist-standalone -type f | wc -l)" -eq 1
+          ! grep -qE '<script[^>]+src=' dist-standalone/JSON2Model.html
+          ! grep -qE '<link[^>]+rel="stylesheet"' dist-standalone/JSON2Model.html
+          # A bundled browser runtime would be hundreds of megabytes.
+          test "$(stat -c%s dist-standalone/JSON2Model.html)" -lt 2000000
       - uses: actions/upload-artifact@v4
         with:
           name: dist

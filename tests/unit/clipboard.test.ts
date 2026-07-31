@@ -3,21 +3,10 @@ import { copyText } from "@/src/utilities/clipboard";
 
 describe("copyText", () => {
   afterEach(() => {
-    delete window.json2ModelDesktop;
     vi.restoreAllMocks();
   });
 
-  it("uses the isolated desktop clipboard bridge when packaged", async () => {
-    const writeClipboard = vi.fn().mockResolvedValue(undefined);
-    window.json2ModelDesktop = { writeClipboard };
-
-    await copyText("class RootModel {}");
-
-    expect(writeClipboard).toHaveBeenCalledOnce();
-    expect(writeClipboard).toHaveBeenCalledWith("class RootModel {}");
-  });
-
-  it("uses the browser clipboard when there is no bridge", async () => {
+  it("uses the async clipboard when it is available", async () => {
     const writeText = vi
       .spyOn(navigator.clipboard, "writeText")
       .mockResolvedValue(undefined);
@@ -27,11 +16,44 @@ describe("copyText", () => {
     expect(writeText).toHaveBeenCalledWith("export interface RootModel {}");
   });
 
-  it("reports a clear error when no clipboard is available", async () => {
+  it("falls back to a selection copy when the clipboard is refused", async () => {
+    // A page opened straight from disk can be denied the async clipboard.
+    vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue(
+      new Error("permission denied"),
+    );
+    const execCommand = vi.fn().mockReturnValue(true);
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: execCommand,
+    });
+
+    await expect(copyText("class RootModel {}")).resolves.toBeUndefined();
+    expect(execCommand).toHaveBeenCalledWith("copy");
+  });
+
+  it("removes the temporary element it used for the fallback", async () => {
+    vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue(
+      new Error("denied"),
+    );
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: vi.fn().mockReturnValue(true),
+    });
+
+    const before = document.body.childElementCount;
+    await copyText("text");
+    expect(document.body.childElementCount).toBe(before);
+  });
+
+  it("reports a clear error when nothing can copy", async () => {
     const clipboard = navigator.clipboard;
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: undefined,
+    });
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: vi.fn().mockReturnValue(false),
     });
 
     await expect(copyText("text")).rejects.toThrow(
@@ -42,12 +64,5 @@ describe("copyText", () => {
       configurable: true,
       value: clipboard,
     });
-  });
-
-  it("passes a rejection from the browser through to the caller", async () => {
-    vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue(
-      new Error("permission denied"),
-    );
-    await expect(copyText("text")).rejects.toThrow("permission denied");
   });
 });
