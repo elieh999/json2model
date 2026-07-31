@@ -246,10 +246,13 @@ and for the response headers a host can add.
 npm run deliverable
 ```
 
-This writes `deliverable/JSON2Model.html`, one self contained file of about
-240 KB with the script and the stylesheet inlined. Opening it runs the whole
-converter in the browser you already have: no install, no server, no internet
-connection. You can email it, put it on a USB stick, or keep it next to a project.
+This writes `JSON2Model.html` at the top of the project, plus a copy in
+`deliverable/` alongside a short readme for sending to someone else. It is one self
+contained file of about 240 KB with the script and the stylesheet inlined.
+
+Double-click it and the whole converter opens in the browser you already have: no
+install, no server, no internet connection. You can email it, put it on a USB stick,
+or keep it next to a project.
 
 An earlier version of this project shipped the same application wrapped in
 Electron, which meant handing someone 350 MB of bundled Chromium and an executable

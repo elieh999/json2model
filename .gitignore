@@ -37,3 +37,6 @@ yarn-error.log*
 
 # Personal notes, not part of the project
 WORK-LOG.md
+
+# The runnable app, copied to the project root by `npm run deliverable`
+JSON2Model.html

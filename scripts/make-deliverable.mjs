@@ -80,6 +80,12 @@ await writeFile(
   "utf8",
 );
 
-const size = (await stat(path.join(outputRoot, "JSON2Model.html"))).size;
-console.log(`deliverable written to ${outputRoot}`);
-console.log(`JSON2Model.html is ${Math.round(size / 1024)} KB`);
+// Also drop a copy at the top of the project, so the thing you double-click is
+// visible as soon as the folder is opened rather than inside a subfolder.
+const shortcut = path.join(projectRoot, "JSON2Model.html");
+await cp(source, shortcut);
+
+const size = (await stat(shortcut)).size;
+console.log(`double-click this:  ${shortcut}`);
+console.log(`shareable folder:   ${outputRoot}`);
+console.log(`size: ${Math.round(size / 1024)} KB`);
