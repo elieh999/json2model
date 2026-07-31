@@ -34,3 +34,6 @@ yarn-error.log*
 
 # Python tool cache from the generated code validation
 .ruff_cache/
+
+# Personal notes, not part of the project
+WORK-LOG.md
