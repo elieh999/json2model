@@ -54,9 +54,9 @@
     "prettier": "3.6.2",
     "tsx": "4.20.6",
     "typescript": "5.9.3",
-    "typescript-eslint": "8.47.0",
-    "vite": "8.2.0",
-    "vitest": "3.2.7"
+    "typescript-eslint": "8.72.0",
+    "vite": "8.3.5",
+    "vitest": "4.1.12"
   },
   "comments": {
     "overrides": [
@@ -64,12 +64,14 @@
       "depends on it. @babel/core covers GHSA-4x5r-pxfx-6jf8 and reaches the",
       "project through @vitejs/plugin-react. It is a build tool and does not",
       "appear in the browser bundle.",
-      "brace-expansion is deliberately not overridden: its 5.x release changes",
-      "the module export shape, and forcing it breaks minimatch consumers with",
-      "'expand is not a function'."
+      "brace-expansion stays on its compatible 1.x line while including the",
+      "recursion and quadratic-expansion fixes.",
+      "js-yaml is constrained to the patched 4.x release used by build tools."
     ]
   },
   "overrides": {
-    "@babel/core": "^7.29.7"
+    "@babel/core": "^7.29.7",
+    "brace-expansion": "1.1.21",
+    "js-yaml": "^4.3.2"
   }
 }
