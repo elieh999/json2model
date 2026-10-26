@@ -16,9 +16,59 @@ export const DEFAULT_INFERENCE_OPTIONS: InferenceOptions = {
   maxNodes: 50_000,
 };
 
-const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 const DATETIME_PATTERN =
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/i;
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:Z|[+-](\d{2}):(\d{2}))$/i;
+
+function validCalendarDate(year: number, month: number, day: number): boolean {
+  if (month < 1 || month > 12 || day < 1) {
+    return false;
+  }
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [
+    31,
+    leapYear ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ];
+  return day <= (daysInMonth[month - 1] ?? 0);
+}
+
+function isDate(value: string): boolean {
+  const match = DATE_PATTERN.exec(value);
+  return Boolean(
+    match &&
+      validCalendarDate(Number(match[1]), Number(match[2]), Number(match[3])),
+  );
+}
+
+function isDateTime(value: string): boolean {
+  const match = DATETIME_PATTERN.exec(value);
+  if (!match) {
+    return false;
+  }
+  const dateIsValid = validCalendarDate(
+    Number(match[1]),
+    Number(match[2]),
+    Number(match[3]),
+  );
+  const timeIsValid =
+    Number(match[4]) <= 23 &&
+    Number(match[5]) <= 59 &&
+    (match[6] === undefined || Number(match[6]) <= 59);
+  const offsetIsValid =
+    match[7] === undefined ||
+    (Number(match[7]) <= 23 && Number(match[8]) <= 59);
+  return dateIsValid && timeIsValid && offsetIsValid;
+}
 
 /**
  * Code point ordering. `localeCompare` depends on the host locale data, and
@@ -299,10 +349,10 @@ function inferNode(
   }
 
   if (typeof value === "string") {
-    if (context.options.detectDates && DATE_PATTERN.test(value)) {
+    if (context.options.detectDates && isDate(value)) {
       return { kind: "primitive", type: "date" };
     }
-    if (context.options.detectDates && DATETIME_PATTERN.test(value)) {
+    if (context.options.detectDates && isDateTime(value)) {
       return { kind: "primitive", type: "datetime" };
     }
     return { kind: "primitive", type: "string" };

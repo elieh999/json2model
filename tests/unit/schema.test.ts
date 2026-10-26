@@ -61,6 +61,30 @@ describe("primitive inference", () => {
       expect(property.node).toEqual({ kind: "primitive", type: "string" });
     }
   });
+
+  it("does not classify impossible calendar dates and times as dates", () => {
+    const schema = inferSchema(
+      {
+        invalidDay: "2026-02-30",
+        invalidLeapDay: "2025-02-29",
+        invalidMonth: "2026-13-01",
+        invalidHour: "2026-07-30T24:00:00Z",
+        invalidOffset: "2026-07-30T08:30:00+02:60",
+        leapDay: "2024-02-29",
+        timestamp: "2026-07-30T08:30:00+02:00",
+      },
+      { detectDates: true },
+    ).schema as ObjectSchemaNode;
+    expect(schema.properties.map((property) => property.node)).toEqual([
+      { kind: "primitive", type: "string" },
+      { kind: "primitive", type: "string" },
+      { kind: "primitive", type: "string" },
+      { kind: "primitive", type: "string" },
+      { kind: "primitive", type: "string" },
+      { kind: "primitive", type: "date" },
+      { kind: "primitive", type: "datetime" },
+    ]);
+  });
 });
 
 describe("object merging", () => {
