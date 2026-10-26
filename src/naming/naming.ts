@@ -422,12 +422,30 @@ export function quoteString(
   quote: "'" | '"' = "'",
   options: { readonly escapeDollar?: boolean } = {},
 ): string {
-  let escaped = value
-    .replaceAll("\\", "\\\\")
-    .replaceAll(quote, `\\${quote}`)
-    .replaceAll("\n", "\\n")
-    .replaceAll("\r", "\\r")
-    .replaceAll("\t", "\\t");
+  let escaped = "";
+  for (const character of value) {
+    if (character === "\\") {
+      escaped += "\\\\";
+    } else if (character === quote) {
+      escaped += `\\${quote}`;
+    } else if (character === "\b") {
+      escaped += "\\b";
+    } else if (character === "\f") {
+      escaped += "\\f";
+    } else if (character === "\n") {
+      escaped += "\\n";
+    } else if (character === "\r") {
+      escaped += "\\r";
+    } else if (character === "\t") {
+      escaped += "\\t";
+    } else {
+      const code = character.charCodeAt(0);
+      escaped +=
+        code <= 0x1f || code === 0x7f || code === 0x2028 || code === 0x2029
+          ? `\\u${code.toString(16).padStart(4, "0")}`
+          : character;
+    }
+  }
   if (options.escapeDollar) {
     escaped = escaped.replaceAll("$", "\\$");
   }

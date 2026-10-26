@@ -125,6 +125,9 @@ describe("quoteString", () => {
     expect(quoteString('say "hi"', '"')).toBe('"say \\"hi\\""');
     expect(quoteString("a\\b", "'")).toBe("'a\\\\b'");
     expect(quoteString("line\nbreak", "'")).toBe("'line\\nbreak'");
+    expect(quoteString("a\b\f\u0000\u001f\u2028b", "'")).toBe(
+      "'a\\b\\f\\u0000\\u001f\\u2028b'",
+    );
   });
 
   it("escapes the dollar sign only when asked", () => {

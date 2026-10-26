@@ -61,6 +61,12 @@ describe("Dart generator", () => {
     expect(code).not.toMatch(/json\['\$id'\]/);
   });
 
+  it("escapes control characters in JSON keys", () => {
+    const code = generate("dart", { "line\nbreak\u0000": 1 }).code;
+    expect(code).toContain("json['line\\nbreak\\u0000'] as int");
+    expect(code).not.toContain("line\nbreak");
+  });
+
   it("renames a field that would collide with a generated member", () => {
     const result = generate("dart", { toJson: 1, fromJson: 2, hashCode: 3 });
     expect(result.code).toContain("final int toJson2;");
