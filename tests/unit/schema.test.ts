@@ -107,6 +107,26 @@ describe("object merging", () => {
     }
   });
 
+  it("keeps arbitrary JSON keys distinct when merging object shapes", () => {
+    const element = elementOf([
+      { a: "text", b: 1 },
+      { "a:primitive:string|b": 2 },
+    ]);
+    if (element.kind !== "object") {
+      throw new Error("expected an object element");
+    }
+    expect(
+      element.properties.map((property) => [
+        property.jsonKey,
+        property.optional,
+      ]),
+    ).toEqual([
+      ["a", true],
+      ["b", true],
+      ["a:primitive:string|b", true],
+    ]);
+  });
+
   it("widens a whole number and a decimal to one floating point type", () => {
     expect(elementOf([1, 2.5])).toEqual({ kind: "primitive", type: "number" });
   });

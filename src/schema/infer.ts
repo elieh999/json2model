@@ -34,20 +34,25 @@ function compareStrings(left: string, right: string): number {
 function schemaSignature(node: SchemaNode): string {
   switch (node.kind) {
     case "primitive":
-      return `primitive:${node.type}`;
+      return JSON.stringify(["primitive", node.type]);
     case "unknown":
-      return "unknown";
+      return JSON.stringify(["unknown"]);
     case "array":
-      return `array:${schemaSignature(node.element)}`;
+      return JSON.stringify(["array", schemaSignature(node.element)]);
     case "object":
-      return `object:${node.properties
-        .map(
-          (property) =>
-            `${property.jsonKey}:${property.optional ? "?" : ""}${schemaSignature(property.node)}`,
-        )
-        .join("|")}`;
+      return JSON.stringify([
+        "object",
+        node.properties.map((property) => [
+          property.jsonKey,
+          property.optional,
+          schemaSignature(property.node),
+        ]),
+      ]);
     case "union":
-      return `union:${node.variants.map(schemaSignature).sort().join("|")}`;
+      return JSON.stringify([
+        "union",
+        node.variants.map(schemaSignature).sort(),
+      ]);
   }
 }
 
